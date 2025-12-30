@@ -5,31 +5,40 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-st.set_page_config(page_title="Bio-Image Quantifier Pro", layout="wide")
+st.set_page_config(page_title="Bio-Image Quantifier Ultimate", layout="wide")
 
 if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
-st.title("🔬 Bio-Image Quantifier: Pro Edition")
-st.caption("2025年最終版：一括解析・N数統合・グラフ生成（Teal Blue）")
+st.title("🔬 Bio-Image Quantifier: Ultimate Fix")
+st.caption("2025年最終修正版：高感度色検出・マスク確認モード搭載")
 
-# 定数・初期設定
+# --- 定数（隙間なく設定） ---
+# Hue（色相）は 0-180。
 DEFAULT_HUE = {
-    "Red_Low": (0, 10), "Red_High": (170, 180),
-    "Green": (35, 85), "Blue": (95, 145), "Brown": (10, 30)
+    "Red_Low": (0, 15),     # 広げた
+    "Red_High": (165, 180), # 広げた
+    "Green": (30, 95),      # 広げた (35-85 -> 30-95)
+    "Blue": (90, 150),      # 広げた (95-145 -> 90-150)
+    "Brown": (0, 40)        # 茶色もカバー
 }
 COLORS = ["茶色 (DAB)", "緑 (GFP)", "赤 (RFP)", "青 (DAPI)"]
 
+# --- サイドバー ---
 with st.sidebar:
     st.header("Analysis Recipe")
+    
+    # 1. デバッグ用スイッチ
+    show_mask_debug = st.checkbox("🛠 マスク画像(白黒)を表示", value=False, help="色が正しく認識されているか、白黒画像で確認できます")
+
     with st.expander("🎨 色の定義を微調整 (Calibration)", expanded=False):
         h_red_l = st.slider("赤(低)範囲", 0, 30, DEFAULT_HUE["Red_Low"], key="h_r_l")
         h_red_h = st.slider("赤(高)範囲", 150, 180, DEFAULT_HUE["Red_High"], key="h_r_h")
-        h_green = st.slider("緑(GFP)範囲", 20, 100, DEFAULT_HUE["Green"], key="h_g")
-        h_blue = st.slider("青(DAPI)範囲", 80, 160, DEFAULT_HUE["Blue"], key="h_b")
-        h_brown = st.slider("茶(DAB)範囲", 0, 50, DEFAULT_HUE["Brown"], key="h_br")
+        h_green = st.slider("緑(GFP)範囲", 10, 110, DEFAULT_HUE["Green"], key="h_g") # 範囲拡大
+        h_blue = st.slider("青(DAPI)範囲", 70, 170, DEFAULT_HUE["Blue"], key="h_b")
+        h_brown = st.slider("茶(DAB)範囲", 0, 60, DEFAULT_HUE["Brown"], key="h_br")
 
-    mode = st.selectbox("解析モードを選択:", [
+    mode = st.selectbox("解析モード:", [
         "1. 単色面積率 (Area)",
         "2. 細胞核カウント (Count)",
         "3. 汎用共局在解析 (Colocalization)",
@@ -40,14 +49,15 @@ with st.sidebar:
 
     # 変数初期化
     target_a, target_b = "青 (DAPI)", "赤 (RFP)"
-    sens_a, sens_b = 20, 20
-    bright_a, bright_b = 30, 60 
-    sens_common, bright_common = 20, 60
+    sens_a, sens_b = 30, 30 # デフォルト感度アップ
+    bright_a, bright_b = 30, 30 
+    sens_common, bright_common = 30, 30
     min_size, bright_count = 50, 50
     sample_group = "Control"
     ratio_val = 0
     trend_metric = ""
 
+    # モード別設定
     if mode.startswith("5."):
         st.markdown("### 🔢 条件設定 (N数追加)")
         trend_metric = st.radio("測定対象:", ["共局在率", "面積率"])
@@ -60,22 +70,22 @@ with st.sidebar:
             c1, c2 = st.columns(2)
             with c1:
                 target_a = st.selectbox("CH-A (基準):", COLORS, index=3, key="m5_ta") 
-                sens_a = st.slider("A感度", 5, 50, 20, key="m5_sa")
+                sens_a = st.slider("A感度(彩度)", 5, 50, 30, key="m5_sa")
                 bright_a = st.slider("A輝度", 0, 255, 30, key="m5_ba")
             with c2:
                 target_b = st.selectbox("CH-B (対象):", COLORS, index=2, key="m5_tb") 
-                sens_b = st.slider("B感度", 5, 50, 20, key="m5_sb")
+                sens_b = st.slider("B感度(彩度)", 5, 50, 30, key="m5_sb")
                 bright_b = st.slider("B輝度", 0, 255, 60, key="m5_bb")
         else:
             target_a = st.selectbox("解析色:", COLORS, index=2, key="m5_ta_area")
-            sens_a = st.slider("感度", 5, 50, 20, key="m5_sa_area")
+            sens_a = st.slider("感度(彩度)", 5, 50, 30, key="m5_sa_area")
             bright_a = st.slider("輝度", 0, 255, 60, key="m5_ba_area")
     else:
         sample_group = st.text_input("グループ名 (例: Control):", value="Control")
         st.divider()
         if mode.startswith("1."):
             target_a = st.selectbox("解析色:", COLORS, index=2)
-            sens_a = st.slider("感度", 5, 50, 20)
+            sens_a = st.slider("感度(彩度)", 5, 50, 30)
             bright_a = st.slider("輝度", 0, 255, 60)
         elif mode.startswith("2."):
             min_size = st.slider("最小サイズ(px)", 10, 500, 50)
@@ -84,16 +94,16 @@ with st.sidebar:
             c1, c2 = st.columns(2)
             with c1:
                 target_a = st.selectbox("CH-A (基準):", COLORS, index=3)
-                sens_a = st.slider("A感度", 5, 50, 20)
+                sens_a = st.slider("A感度(彩度)", 5, 50, 30)
                 bright_a = st.slider("A輝度", 0, 255, 30)
             with c2:
                 target_b = st.selectbox("CH-B (対象):", COLORS, index=2)
-                sens_b = st.slider("B感度", 5, 50, 20)
+                sens_b = st.slider("B感度(彩度)", 5, 50, 30)
                 bright_b = st.slider("B輝度", 0, 255, 60)
         elif mode.startswith("4."):
             target_a = st.selectbox("起点A:", COLORS, index=3)
             target_b = st.selectbox("対象B:", COLORS, index=2)
-            sens_common = st.slider("色感度", 5, 50, 20)
+            sens_common = st.slider("色感度", 5, 50, 30)
             bright_common = st.slider("輝度", 0, 255, 60)
 
     st.divider()
@@ -103,10 +113,18 @@ with st.sidebar:
         st.session_state.analysis_history = []
         st.rerun()
 
+# --- 関数定義 ---
 def get_mask_dynamic(hsv_img, color_name, sens, bright_min):
+    # 【重要修正】彩度の下限を大幅に下げる
+    # sens=50なら0(白も拾う)、sens=0なら50(濃い色のみ)
+    # デフォルトsens=30 -> min_saturation=20 (かなり淡い色も拾う)
     min_saturation = max(0, 50 - sens)
+    
+    # 1. 輝度によるフィルタリング
     h, s, v = cv2.split(hsv_img)
-    v_mask = cv2.threshold(v, bright_min, 255, cv2.THRESH_BINARY)[1]
+    _, v_mask = cv2.threshold(v, bright_min, 255, cv2.THRESH_BINARY)
+    
+    # 2. 色によるフィルタリング
     color_mask = np.zeros_like(v_mask)
     if color_name == "赤 (RFP)":
         l1, h1 = h_red_l; l2, h2 = h_red_h
@@ -121,7 +139,10 @@ def get_mask_dynamic(hsv_img, color_name, sens, bright_min):
     elif color_name == "茶色 (DAB)":
         l, h = h_brown
         color_mask = cv2.inRange(hsv_img, np.array([l, min_saturation, 0]), np.array([h, 255, 255]))
-    return cv2.bitwise_and(color_mask, v_mask)
+    
+    # 3. 統合
+    final_mask = cv2.bitwise_and(color_mask, v_mask)
+    return final_mask
 
 def get_centroids(mask):
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -131,7 +152,8 @@ def get_centroids(mask):
         if M["m00"] != 0: pts.append(np.array([M["m10"]/M["m00"], M["m01"]/M["m00"]]))
     return pts
 
-uploaded_files = st.file_uploader("画像をまとめてアップロード (N数追加)", type=["jpg", "png", "tif"], accept_multiple_files=True)
+# --- メインエリア ---
+uploaded_files = st.file_uploader("画像をまとめてアップロード", type=["jpg", "png", "tif"], accept_multiple_files=True)
 
 if uploaded_files:
     st.success(f"{len(uploaded_files)} 枚受信。解析中...")
@@ -145,7 +167,8 @@ if uploaded_files:
             img_hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
             val, unit, res_display = 0.0, "", img_rgb.copy()
             
-            # モード判定（あいまい検索で確実にヒットさせる）
+            # --- 解析 ---
+            # 部分一致で判定（"5. 割合トレンド解析" でも "共局在率" が含まれればヒット）
             is_area = "面積" in mode or (mode.startswith("5.") and "面積" in trend_metric)
             is_count = "カウント" in mode
             is_coloc = "共局在" in mode or (mode.startswith("5.") and "共局在" in trend_metric)
@@ -156,6 +179,8 @@ if uploaded_files:
                 val = (cv2.countNonZero(mask) / (img_rgb.shape[0] * img_rgb.shape[1])) * 100
                 unit = "% Area"
                 res_display = mask
+                if show_mask_debug: res_display = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB) # Debug
+
             elif is_count:
                 gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
                 _, th = cv2.threshold(gray, bright_count, 255, cv2.THRESH_BINARY)
@@ -165,6 +190,7 @@ if uploaded_files:
                 valid = [c for c in cnts if cv2.contourArea(c) > min_size]
                 val, unit = len(valid), "cells"
                 cv2.drawContours(res_display, valid, -1, (0,255,0), 2)
+            
             elif is_coloc:
                 mask_a = get_mask_dynamic(img_hsv, target_a, sens_a, bright_a)
                 mask_b = get_mask_dynamic(img_hsv, target_b, sens_b, bright_b)
@@ -172,7 +198,14 @@ if uploaded_files:
                 denom = cv2.countNonZero(mask_a)
                 val = (cv2.countNonZero(coloc) / denom * 100) if denom > 0 else 0
                 unit = "% Coloc"
-                res_display = cv2.merge([np.zeros_like(mask_a), mask_a, mask_b]) # 黄色表示
+                # 表示
+                if show_mask_debug:
+                    # デバッグモード: 赤=対象マスク, 緑=基準マスク の単純加算
+                    res_display = cv2.merge([np.zeros_like(mask_a), mask_a, mask_b])
+                else:
+                    # 通常モード: 黄色表示
+                    res_display = cv2.merge([np.zeros_like(mask_a), mask_a, mask_b])
+
             elif is_dist:
                 mask_a = get_mask_dynamic(img_hsv, target_a, sens_common, bright_common)
                 mask_b = get_mask_dynamic(img_hsv, target_b, sens_common, bright_common)
@@ -183,9 +216,6 @@ if uploaded_files:
                 unit = "px Dist"
                 res_display = cv2.addWeighted(img_rgb, 0.6, cv2.merge([np.zeros_like(mask_a), mask_a, mask_b]), 0.4, 0)
             
-            # 万が一 unit が空なら強制代入
-            if unit == "": unit = "(No Unit)"
-
             batch_results.append({
                 "Group": sample_group, "Value": val, "Unit": unit,
                 "Is_Trend": mode.startswith("5."), "Ratio_Value": ratio_val if mode.startswith("5.") else 0
@@ -193,7 +223,7 @@ if uploaded_files:
             with st.expander(f"📷 Img {i+1}: {val:.2f} {unit}", expanded=True):
                 c1, c2 = st.columns(2)
                 c1.image(img_rgb, caption="Original", use_container_width=True)
-                c2.image(res_display, caption="Result", use_container_width=True)
+                c2.image(res_display, caption="Result (Debug: ON)" if show_mask_debug else "Result", use_container_width=True)
 
     st.divider()
     if st.button(f"これら {len(batch_results)} 件を「{sample_group}」データとして統合", type="primary"):
