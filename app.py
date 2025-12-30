@@ -7,157 +7,121 @@ import seaborn as sns
 from scipy import stats
 
 # --- ページ設定 ---
-st.set_page_config(page_title="Professional Bio-Quantifier Ultimate", layout="wide")
+st.set_page_config(page_title="Bio-Image Quantifier", layout="wide")
 
-# 解析履歴の保持
+# 履歴保持用のリスト
 if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
-st.title("🔬 Bio-Image Quantifier: Ultimate Edition")
-st.caption("2025年完遂仕様：多重染色・共局在・空間距離・統計解析を完全統合")
+st.title("🔬 Professional Bio-Image Quantifier")
 
-# --- サイドバー：解析設定 ---
+# --- サイドバー：解析レシピ ---
 with st.sidebar:
     st.header("Analysis Recipe")
-    
-    # 4つのモードを完全搭載
     mode = st.selectbox("解析モードを選択:", [
         "1. 多重染色分離/面積 (Area)",
         "2. 細胞核カウント (Count)",
         "3. 共局在解析 (Colocalization)",
         "4. 空間距離解析 (Spatial Distance)"
     ])
-    
-    # 共通設定: グループ名
-    sample_group = st.text_input("グループ名 (X軸):", placeholder="例: Control, Treatment")
-    
+    sample_group = st.text_input("グループ名 (X軸):", value="Control")
     st.divider()
-    st.subheader("Parameter Tuning")
-
+    
     # モード別パラメータ
     if mode == "1. 多重染色分離/面積 (Area)":
         target_color = st.radio("ターゲット色:", ["茶色 (DAB)", "緑 (GFP)", "赤 (RFP)"])
         sensitivity = st.slider("色抽出感度", 10, 100, 40)
-    
     elif mode == "2. 細胞核カウント (Count)":
         min_size = st.slider("最小細胞サイズ (px)", 10, 500, 50)
-        
     elif mode == "3. 共局在解析 (Colocalization)":
-        st.info("緑(Green)と赤(Red)の重なりを解析")
         sens_g = st.slider("Green感度", 10, 100, 40)
         sens_r = st.slider("Red感度", 10, 100, 40)
-
     elif mode == "4. 空間距離解析 (Spatial Distance)":
-        st.info("群A(赤)と群B(青/緑)の重心間距離を解析")
-        color_a = "赤 (Red)"
-        color_b = st.radio("群Bの色:", ["緑 (Green)", "青 (Blue/DAPI)"])
-        dist_sens = st.slider("検出感度", 10, 100, 40)
+        color_b_name = st.radio("群Bの色:", ["緑 (Green)", "青 (Blue/DAPI)"])
 
-    st.divider()
-    if st.button("履歴・グラフをリセット"):
+    if st.button("履歴をすべて削除"):
         st.session_state.analysis_history = []
         st.rerun()
 
-# --- メイン：画像解析ロジック ---
-uploaded_file = st.file_uploader("画像をアップロード...", type=["jpg", "png", "tif"])
+# --- メイン：画像アップロード ---
+uploaded_file = st.file_uploader("画像をアップロードしてください", type=["jpg", "png", "tif"])
 
 if uploaded_file:
-    # 画像読み込み
+    # 画像の読み込み（ここで確実にメモリに載せる）
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     
+    # 解析用変数
     val = 0.0
     unit = ""
-    result_img = img_rgb.copy()
+    res_display = None
 
-    # ---------------------------------------------------------
-    # 1. 多重染色分離 / 面積率
-    # ---------------------------------------------------------
+    # --- 解析実行（ボタンなしで自動実行） ---
     if mode == "1. 多重染色分離/面積 (Area)":
-        lower, upper = None, None
-        if target_color == "茶色 (DAB)":
-            lower = np.array([10, 50, 20])
-            upper = np.array([30, 255, 255])
-        elif target_color == "緑 (GFP)":
-            lower = np.array([35, 50, 50])
-            upper = np.array([85, 255, 255])
-        else: # 赤
-            lower = np.array([0, 50, 50])
-            upper = np.array([10, 255, 255])
-            # 赤は170-180も含むが簡易版として0-10を使用、必要ならmask結合
+        if target_color == "茶色 (DAB)": lower, upper = np.array([10, 50, 20]), np.array([30, 255, 255])
+        elif target_color == "緑 (GFP)": lower, upper = np.array([35, 50, 50]), np.array([85, 255, 255])
+        else: lower, upper = np.array([0, 50, 50]), np.array([10, 255, 255])
         
-        # 感度適用
-        lower = np.clip(lower - sensitivity, 0, 255)
-        upper = np.clip(upper + sensitivity, 0, 255)
-        
-        mask = cv2.inRange(img_hsv, lower, upper)
+        mask = cv2.inRange(img_hsv, np.clip(lower-sensitivity,0,255), np.clip(upper+sensitivity,0,255))
         val = (cv2.countNonZero(mask) / (img.shape[0] * img.shape[1])) * 100
-        unit = "% (Area)"
-        result_img = mask
+        unit = "%"
+        res_display = mask
 
-    # ---------------------------------------------------------
-    # 2. 細胞核カウント
-    # ---------------------------------------------------------
     elif mode == "2. 細胞核カウント (Count)":
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        valid = [c for c in contours if cv2.contourArea(c) > min_size]
-        
-        cv2.drawContours(result_img, valid, -1, (0, 255, 0), 2)
+        _, thresh = cv2.threshold(cv2.GaussianBlur(gray,(5,5),0), 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+        cnts, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        valid = [c for c in cnts if cv2.contourArea(c) > min_size]
         val = len(valid)
         unit = "cells"
+        res_display = img_rgb.copy()
+        cv2.drawContours(res_display, valid, -1, (0,255,0), 2)
 
-    # ---------------------------------------------------------
-    # 3. 共局在解析 (Colocalization)
-    # ---------------------------------------------------------
     elif mode == "3. 共局在解析 (Colocalization)":
-        # Green Mask
-        lower_g = np.array([35, 50, 50])
-        upper_g = np.array([85, 255, 255])
-        mask_g = cv2.inRange(img_hsv, np.clip(lower_g-sens_g,0,255), np.clip(upper_g+sens_g,0,255))
-        
-        # Red Mask
-        lower_r = np.array([0, 50, 50])
-        upper_r = np.array([10, 255, 255])
-        mask_r = cv2.inRange(img_hsv, np.clip(lower_r-sens_r,0,255), np.clip(upper_r+sens_r,0,255))
-        
-        # Overlap (AND)
-        coloc = cv2.bitwise_and(mask_g, mask_r)
-        
-        # 共局在率 = (重なり面積 / 緑面積) * 100
-        area_g = cv2.countNonZero(mask_g)
-        area_coloc = cv2.countNonZero(coloc)
-        val = (area_coloc / area_g * 100) if area_g > 0 else 0
-        unit = "% (Coloc/Green)"
-        
-        # 可視化: 緑+赤+黄(重なり)
-        result_img = cv2.merge([mask_r, mask_g, np.zeros_like(mask_g)])
+        m_g = cv2.inRange(img_hsv, np.array([35,50,50]), np.array([85,255,255]))
+        m_r = cv2.inRange(img_hsv, np.array([0,50,50]), np.array([10,255,255]))
+        coloc = cv2.bitwise_and(m_g, m_r)
+        val = (cv2.countNonZero(coloc) / cv2.countNonZero(m_g) * 100) if cv2.countNonZero(m_g) > 0 else 0
+        unit = "% (Coloc)"
+        res_display = cv2.merge([m_r, m_g, np.zeros_like(m_g)])
 
-    # ---------------------------------------------------------
-    # 4. 空間距離解析 (Spatial Distance)
-    # ---------------------------------------------------------
     elif mode == "4. 空間距離解析 (Spatial Distance)":
-        # Group A (Red)
-        mask_a = cv2.inRange(img_hsv, np.array([0, 50, 50]), np.array([10, 255, 255]))
+        m_a = cv2.inRange(img_hsv, np.array([0,50,50]), np.array([10,255,255]))
+        if color_b_name == "緑 (Green)": m_b = cv2.inRange(img_hsv, np.array([35,50,50]), np.array([85,255,255]))
+        else: m_b = cv2.inRange(img_hsv, np.array([100,50,50]), np.array([130,255,255]))
         
-        # Group B (Green or Blue)
-        if color_b == "緑 (Green)":
-            mask_b = cv2.inRange(img_hsv, np.array([35, 50, 50]), np.array([85, 255, 255]))
-        else: # Blue (DAPIなど: H 100-130)
-            mask_b = cv2.inRange(img_hsv, np.array([100, 50, 50]), np.array([130, 255, 255]))
-            
-        def get_centroids(m):
-            cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            pts = []
-            for c in cnts:
-                M = cv2.moments(c)
-                if M["m00"] != 0:
-                    # 重心計算：ここが長すぎて切れていた可能性があります
-                    cx = M["m10"] / M["m00"]
-                    cy = M["m01"] / M["m00"]
-                    pts.append(np.array([cx, cy]))
-            return pts
+        def get_pts(m):
+            c, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            p = []
+            for cnt in c:
+                M = cv2.moments(cnt)
+                if M["m00"] != 0: p.append(np.array([M["m10"]/M["m00"], M["m01"]/M["m00"]]))
+            return p
+        pts_a, pts_b = get_pts(m_a), get_pts(m_b)
+        val = np.mean([np.min([np.linalg.norm(pa-pb) for pb in pts_b]) for pa in pts_a]) if pts_a and pts_b else 0
+        unit = "px"
+        res_display = img_rgb
+
+    # --- 結果の表示 ---
+    c1, c2 = st.columns(2)
+    c1.image(img_rgb, caption="Original Image")
+    c2.image(res_display, caption="Analysis View")
+    
+    st.subheader(f"📊 Result: {val:.2f} {unit}")
+    
+    if st.button("この値を履歴（グラフ）に追加"):
+        st.session_state.analysis_history.append({"Group": sample_group, "Value": val, "Unit": unit})
+        st.success(f"Added to history: {val:.2f} {unit}")
+
+# --- 統計グラフ ---
+st.divider()
+if st.session_state.analysis_history:
+    df = pd.DataFrame(st.session_state.analysis_history)
+    fig, ax = plt.subplots(figsize=(6, 4))
+    sns.barplot(data=df, x="Group", y="Value", ax=ax, alpha=0.6, errorbar="sd", capsize=.1)
+    sns.stripplot(data=df, x="Group", y="Value", ax=ax, color=".2", jitter=True)
+    ax.set_ylabel(f"Value ({df['Unit'].iloc[-1]})")
+    st.pyplot(fig)
+    st.dataframe(df)
