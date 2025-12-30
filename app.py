@@ -156,4 +156,8 @@ if uploaded_file:
             for c in cnts:
                 M = cv2.moments(c)
                 if M["m00"] != 0:
-                    pts.append(np.array([M["m10"]/M["m00"], M["m01"]/M["m
+                    # 重心計算：ここが長すぎて切れていた可能性があります
+                    cx = M["m10"] / M["m00"]
+                    cy = M["m01"] / M["m00"]
+                    pts.append(np.array([cx, cy]))
+            return pts
