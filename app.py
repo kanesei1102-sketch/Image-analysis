@@ -67,4 +67,102 @@ with st.sidebar:
 
     elif mode == "4. 空間距離解析 (Spatial Distance)":
         target_a = st.selectbox("起点となる色(A):", list(COLOR_MAP.keys()), index=2)
-        sens_a = st.slider("起点A感度", 10,
+        sens_a = st.slider("起点A感度", 10,10, 100, 40)
+        target_b = st.selectbox("対象となる色(B):", list(COLOR_MAP.keys()), index=3)
+        sens_b = st.slider("対象B感度", 10, 100, 40)
+
+    if st.button("履歴をすべて削除"):
+        st.session_state.analysis_history = []
+        st.rerun()
+
+# --- メインロジック ---
+uploaded_file = st.file_uploader("画像をアップロード...", type=["jpg", "png", "tif"])
+
+if uploaded_file:
+    # 【重要】ファイルポインタを先頭に戻す（これが修正点）
+    uploaded_file.seek(0)
+    
+    # 画像読み込み
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    img = cv2.imdecode(file_bytes, 1)
+    
+    if img is None:
+        st.error("画像の読み込みに失敗しました。ファイル形式を確認してください。")
+    else:
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        
+        val, unit = 0.0, ""
+        res_display = img_rgb.copy()
+
+        # --------------------
+        # 1. 面積率
+        # --------------------
+        if mode == "1. 単色面積率 (Area)":
+            mask = get_mask(img_hsv, target_a, sens_a)
+            val = (cv2.countNonZero(mask) / (img.shape[0] * img.shape[1])) * 100
+            unit = f"% ({target_a})"
+            res_display = mask
+
+        # --------------------
+        # 2. カウント
+        # --------------------
+        elif mode == "2. 細胞核カウント (Count)":
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            _, thresh = cv2.threshold(cv2.GaussianBlur(gray,(5,5),0), 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+            cnts, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            valid = [c for c in cnts if cv2.contourArea(c) > min_size]
+            val, unit = len(valid), "cells"
+            cv2.drawContours(res_display, valid, -1, (0,255,0), 2)
+
+        # --------------------
+        # 3. 共局在
+        # --------------------
+        elif mode == "3. 汎用共局在解析 (Colocalization)":
+            mask_a = get_mask(img_hsv, target_a, sens_a)
+            mask_b = get_mask(img_hsv, target_b, sens_b)
+            coloc = cv2.bitwise_and(mask_a, mask_b)
+            val = (cv2.countNonZero(coloc) / cv2.countNonZero(mask_a) * 100) if cv2.countNonZero(mask_a) > 0 else 0
+            unit = f"% ({target_b} in {target_a})"
+            res_display = cv2.merge([mask_b, mask_a, np.zeros_like(mask_a)])
+
+        # --------------------
+        # 4. 空間距離
+        # --------------------
+        elif mode == "4. 空間距離解析 (Spatial Distance)":
+            mask_a = get_mask(img_hsv, target_a, sens_a)
+            mask_b = get_mask(img_hsv, target_b, sens_b)
+            pts_a, pts_b = get_centroids(mask_a), get_centroids(mask_b)
+            
+            if pts_a and pts_b:
+                # 距離計算の高速化
+                dists = []
+                for pa in pts_a:
+                    d = np.min([np.linalg.norm(pa - pb) for pb in pts_b])
+                    dists.append(d)
+                val = np.mean(dists)
+            else:
+                val = 0
+            unit = "px"
+            res_display = cv2.addWeighted(img_rgb, 0.6, cv2.merge([mask_a, mask_b, np.zeros_like(mask_a)]), 0.4, 0)
+
+        # 表示
+        c1, c2 = st.columns(2)
+        c1.image(img_rgb, caption="Original")
+        c2.image(res_display, caption="Analysis View")
+        st.subheader(f"📊 Result: {val:.2f} {unit}")
+        
+        if st.button("履歴に追加"):
+            st.session_state.analysis_history.append({"Group": sample_group, "Value": val, "Unit": unit})
+            st.success(f"Added: {val:.2f}")
+
+# --- グラフ ---
+st.divider()
+if st.session_state.analysis_history:
+    df = pd.DataFrame(st.session_state.analysis_history)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    sns.barplot(data=df, x="Group", y="Value", ax=ax, palette="muted", alpha=0.6, errorbar="sd", capsize=.1)
+    sns.stripplot(data=df, x="Group", y="Value", ax=ax, color=".2", size=8, jitter=True)
+    ax.set_ylabel(f"Value ({df['Unit'].iloc[-1]})")
+    st.pyplot(fig)
+    st.dataframe(df)
