@@ -2,8 +2,8 @@ import streamlit as st
 import cv2
 import numpy as np
 import pandas as pd
-import altair as alt # インタラクティブグラフ用
-import matplotlib.pyplot as plt # ダウンロード画像生成用（画面には出さない）
+import altair as alt
+import matplotlib.pyplot as plt
 import seaborn as sns
 import io
 
@@ -13,7 +13,7 @@ if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
 st.title("🔬 Bio-Image Quantifier: Pro Edition")
-st.caption("2025年最終版：スマートグラフ表示 + レポート画像DL機能")
+st.caption("2025年最終版：ウィンドウ常時展開・0未満排除・レポートDL機能")
 
 # --- 色定義 ---
 COLOR_MAP = {
@@ -47,9 +47,8 @@ def get_centroids(mask):
             pts.append(np.array([M["m10"]/M["m00"], M["m01"]/M["m00"]]))
     return pts
 
-# --- 裏方：ダウンロード用グラフ画像を生成する関数（画面表示はしない） ---
+# --- 裏方：ダウンロード用グラフ画像を生成する関数 ---
 def generate_static_plot(df, x_col, y_col, plot_type="bar"):
-    # スタイル設定
     sns.set_style("whitegrid")
     fig, ax = plt.subplots(figsize=(8, 5))
     
@@ -59,21 +58,19 @@ def generate_static_plot(df, x_col, y_col, plot_type="bar"):
     else:
         sns.scatterplot(data=df, x=x_col, y=y_col, ax=ax, color="crimson", s=100)
     
-    # 0%固定設定
+    # Y軸を0スタートに強制固定
     ax.set_ylim(bottom=0)
     ax.set_ylabel(df['Unit'].iloc[0])
     
-    # バッファに保存
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
     buf.seek(0)
-    plt.close(fig) # メモリ解放
+    plt.close(fig)
     return buf
 
 # --- サイドバー ---
 with st.sidebar:
     st.header("Analysis Recipe")
-    
     mode = st.selectbox("解析モードを選択:", [
         "1. 単色面積率 (Area)",
         "2. 細胞核カウント (Count)",
@@ -81,10 +78,8 @@ with st.sidebar:
         "4. 汎用空間距離解析 (Spatial Distance)",
         "5. 割合トレンド解析 (Ratio Analysis)"
     ])
-    
     st.divider()
 
-    # --- モード設定 ---
     if mode == "5. 割合トレンド解析 (Ratio Analysis)":
         st.markdown("### 🔢 条件設定 (Batch)")
         trend_metric = st.radio("測定対象:", ["共局在率 (Colocalization)", "面積率 (Area)"])
@@ -92,9 +87,7 @@ with st.sidebar:
         ratio_unit = st.text_input("単位:", value="%", key="unit")
         sample_group = f"{ratio_val}{ratio_unit}"
         st.info(f"ラベル: **{sample_group}**")
-        
         st.divider()
-        st.markdown("#### 解析パラメータ")
         if trend_metric == "共局在率 (Colocalization)":
             c1, c2 = st.columns(2)
             with c1:
@@ -105,11 +98,10 @@ with st.sidebar:
                 target_b = st.selectbox("CH-B (対象):", list(COLOR_MAP.keys()), index=2) 
                 sens_b = st.slider("B感度", 5, 50, 20, key="t_s_b")
                 bright_b = st.slider("B輝度", 0, 255, 60, key="t_b_b")
-        else: # 面積
+        else:
             target_a = st.selectbox("解析色:", list(COLOR_MAP.keys()), index=2)
             sens_a = st.slider("感度", 5, 50, 20, key="t_s_a")
             bright_a = st.slider("輝度", 0, 255, 60, key="t_b_a")
-
     else:
         sample_group = st.text_input("グループ名 (X軸):", value="Control")
         st.divider()
@@ -165,7 +157,6 @@ if uploaded_files:
                 val = (cv2.countNonZero(mask) / (img_rgb.shape[0] * img_rgb.shape[1])) * 100
                 unit = f"% Area"
                 res_display = mask
-
             elif mode == "2. 細胞核カウント (Count)":
                 gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
                 _, th = cv2.threshold(gray, bright_count, 255, cv2.THRESH_BINARY)
@@ -176,7 +167,6 @@ if uploaded_files:
                 valid = [c for c in cnts if cv2.contourArea(c) > min_size]
                 val, unit = len(valid), "cells"
                 cv2.drawContours(res_display, valid, -1, (0,255,0), 2)
-
             elif mode == "3. 汎用共局在解析 (Colocalization)" or (mode.startswith("5.") and trend_metric == "共局在率 (Colocalization)"):
                 mask_a = get_mask(img_hsv, target_a, sens_a, bright_a)
                 mask_b = get_mask(img_hsv, target_b, sens_b, bright_b)
@@ -185,7 +175,6 @@ if uploaded_files:
                 val = (cv2.countNonZero(coloc) / denom * 100) if denom > 0 else 0
                 unit = f"% Coloc"
                 res_display = cv2.merge([mask_b, mask_a, np.zeros_like(mask_a)])
-
             elif mode == "4. 汎用空間距離解析 (Spatial Distance)":
                 mask_a = get_mask(img_hsv, target_a, sens_common, bright_common)
                 mask_b = get_mask(img_hsv, target_b, sens_common, bright_common)
@@ -196,7 +185,7 @@ if uploaded_files:
                 unit = "px Dist"
                 res_display = cv2.addWeighted(img_rgb, 0.6, cv2.merge([mask_a, mask_b, np.zeros_like(mask_a)]), 0.4, 0)
             
-            # --- 数値補正 (0未満防止) ---
+            # --- 0未満防止 ---
             val = max(0.0, val)
 
             entry = {
@@ -208,7 +197,12 @@ if uploaded_files:
             }
             batch_results.append(entry)
             
-            with st.expander(f"📷 Result: {val:.2f} {unit} | {file.name}"):
+            # --- 【修正】Expanderのタイトルを固定（ファイル名のみ） ---
+            # 数値が変わってもタイトルが変わらないので、ウィンドウが閉じなくなる
+            with st.expander(f"📷 Image {i+1}: {file.name}", expanded=True):
+                # 数値は中で表示
+                st.markdown(f"### Result: **{val:.2f} {unit}**")
+                
                 c1, c2 = st.columns(2)
                 c1.image(img_rgb, caption="Original", use_container_width=True)
                 c2.image(res_display, caption="Analyzed", use_container_width=True)
@@ -217,56 +211,50 @@ if uploaded_files:
         st.session_state.analysis_history.extend(batch_results)
         st.rerun()
 
-# --- レポート表示セクション (Altairで綺麗に表示 + ダウンロード機能) ---
+# --- レポート表示セクション ---
 if st.session_state.analysis_history:
     st.divider()
     st.header("📈 Analysis Report")
     
     df = pd.DataFrame(st.session_state.analysis_history)
+    
+    # 全データのマイナス値を強制0補正
+    df["Value"] = df["Value"].clip(lower=0)
+
     has_trend = df["Is_Trend"].any()
     
-    # --- 表示用グラフ (Altair: インタラクティブ・0起点) ---
     if has_trend:
         df_trend = df[df["Is_Trend"] == True].sort_values(by="Ratio_Value")
         
         tab1, tab2 = st.tabs(["📊 棒グラフ", "📈 散布図"])
-        
         with tab1:
-            # Altairで棒グラフを作成 (Y軸0固定)
             chart = alt.Chart(df_trend).mark_bar().encode(
                 x=alt.X('Group', sort=None),
                 y=alt.Y('Value', scale=alt.Scale(domainMin=0), title=df_trend['Unit'].iloc[0]),
                 tooltip=['Group', 'Value', 'Unit']
             ).interactive()
-            
             st.altair_chart(chart, use_container_width=True)
             
-            # ダウンロードボタン (裏でMatplotlib画像を生成)
             img_buf = generate_static_plot(df_trend, "Group", "Value", "bar")
             st.download_button("📸 グラフ画像を保存 (Bar)", img_buf, "bar_chart.png", "image/png")
 
         with tab2:
-            # Altairで散布図を作成 (Y軸0固定)
             chart_sc = alt.Chart(df_trend).mark_circle(size=100, color="crimson").encode(
                 x=alt.X('Ratio_Value', title='Ratio Value'),
                 y=alt.Y('Value', scale=alt.Scale(domainMin=0), title=df_trend['Unit'].iloc[0]),
                 tooltip=['Ratio_Value', 'Value', 'Unit']
             ).interactive()
-            
             st.altair_chart(chart_sc, use_container_width=True)
             
-            # ダウンロードボタン
             img_buf_sc = generate_static_plot(df_trend, "Ratio_Value", "Value", "scatter")
             st.download_button("📸 グラフ画像を保存 (Scatter)", img_buf_sc, "scatter_chart.png", "image/png")
 
     else:
-        # 通常モード (棒グラフのみ)
         chart = alt.Chart(df).mark_bar().encode(
             x=alt.X('Group', sort=None),
             y=alt.Y('Value', scale=alt.Scale(domainMin=0), title=df['Unit'].iloc[-1]),
             tooltip=['Group', 'Value', 'Unit']
         ).interactive()
-        
         st.altair_chart(chart, use_container_width=True)
         
         img_buf = generate_static_plot(df, "Group", "Value", "bar")
