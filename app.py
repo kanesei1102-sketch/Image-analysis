@@ -2,6 +2,8 @@ import streamlit as st
 import cv2
 import numpy as np
 import pandas as pd
+# グラフ描画用のライブラリは不要になったため削除しても動作しますが、
+# 後で戻したくなった時のためにimport文だけ残しておくか、削除してもOKです
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -11,7 +13,7 @@ if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
 st.title("🔬 Bio-Image Quantifier: Pro Edition")
-st.caption("2025年最終版：一括解析＋「元画像との比較確認」機能搭載")
+st.caption("2025年最終版：一括解析＋「元画像との比較確認」機能搭載 (グラフ表示なし)")
 
 # --- 色定義 ---
 COLOR_MAP = {
@@ -112,7 +114,7 @@ with st.sidebar:
             sens_common = st.slider("色感度", 5, 50, 20)
             bright_common = st.slider("輝度", 0, 255, 60)
 
-    if st.button("履歴・グラフを全消去"):
+    if st.button("履歴を全消去"):
         st.session_state.analysis_history = []
         st.rerun()
 
@@ -186,7 +188,6 @@ if uploaded_files:
             }
             batch_results.append(entry)
             
-            # --- 【修正】 単位(unit)をヘッダーに表示 ---
             header_text = f"📷 Image {i+1}: {file.name} - Result: {val:.2f} {unit}"
             with st.expander(header_text, expanded=True):
                 c1, c2 = st.columns(2)
@@ -195,42 +196,22 @@ if uploaded_files:
 
     # --- 一括登録ボタン ---
     st.divider()
-    if st.button(f"これら {len(batch_results)} 件の全データをグラフに追加", type="primary"):
+    if st.button(f"これら {len(batch_results)} 件のデータをテーブルに追加", type="primary"):
         st.session_state.analysis_history.extend(batch_results)
-        st.success(f"✅ 追加しました！")
+        st.success(f"✅ データテーブルに追加しました")
 
-# --- グラフ描画セクション ---
+# --- 結果レポートセクション (グラフ削除版) ---
 if st.session_state.analysis_history:
     st.divider()
-    st.header("📈 Analysis Report")
+    st.header("📈 Analysis Report (Data Only)")
     
     df = pd.DataFrame(st.session_state.analysis_history)
-    has_trend = df["Is_Trend"].any()
     
-    if has_trend:
-        # モード5：数値順ソート・棒グラフメイン
-        df_trend = df[df["Is_Trend"] == True].sort_values(by="Ratio_Value")
-        
-        tab1, tab2 = st.tabs(["棒グラフ (Bar)", "散布図 (Scatter)"])
-        with tab1:
-            fig, ax = plt.subplots(figsize=(8, 5))
-            sns.barplot(data=df_trend, x="Group", y="Value", ax=ax, palette="viridis", capsize=.1)
-            sns.stripplot(data=df_trend, x="Group", y="Value", ax=ax, color=".2", jitter=True)
-            ax.set_ylabel(df_trend['Unit'].iloc[0])
-            st.pyplot(fig)
-        with tab2:
-            fig, ax = plt.subplots(figsize=(8, 5))
-            sns.scatterplot(data=df_trend, x="Ratio_Value", y="Value", ax=ax, color="crimson", s=100)
-            ax.set_xlabel("Ratio Value")
-            ax.set_ylabel(df_trend['Unit'].iloc[0])
-            st.pyplot(fig)
-    else:
-        # 通常モード
-        fig, ax = plt.subplots(figsize=(8, 5))
-        sns.barplot(data=df, x="Group", y="Value", ax=ax, palette="muted", capsize=.1)
-        sns.stripplot(data=df, x="Group", y="Value", ax=ax, color=".2", jitter=True)
-        ax.set_ylabel(df['Unit'].iloc[-1])
-        st.pyplot(fig)
-
-    st.dataframe(df)
-    st.download_button("CSV保存", df.to_csv(index=False).encode('utf-8'), "data.csv", "text/csv")
+    # データを表示
+    st.dataframe(df, use_container_width=True)
+    
+    # CSV保存ボタン
+    st.download_button("📥 CSV保存 (Excel対応)", 
+                       df.to_csv(index=False).encode('utf-8'), 
+                       "analysis_data.csv", 
+                       "text/csv")
