@@ -13,7 +13,7 @@ if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
 st.title("🔬 Bio-Image Quantifier: Pro Edition")
-st.caption("2025年最終版：ウィンドウ常時展開・0未満排除・レポートDL機能")
+st.caption("2025年最終版：シンプル棒グラフ画像DL (エラーバー・プロットなし)")
 
 # --- 色定義 ---
 COLOR_MAP = {
@@ -48,14 +48,16 @@ def get_centroids(mask):
     return pts
 
 # --- 裏方：ダウンロード用グラフ画像を生成する関数 ---
+# 【修正】エラーバー(errorbar=None)も削除し、完全に棒だけにする
 def generate_static_plot(df, x_col, y_col, plot_type="bar"):
     sns.set_style("whitegrid")
     fig, ax = plt.subplots(figsize=(8, 5))
     
     if plot_type == "bar":
-        sns.barplot(data=df, x=x_col, y=y_col, ax=ax, palette="viridis", capsize=.1)
-        sns.stripplot(data=df, x=x_col, y=y_col, ax=ax, color=".2", jitter=True)
+        # errorbar=None でエラーバーを消去
+        sns.barplot(data=df, x=x_col, y=y_col, ax=ax, palette="viridis", errorbar=None)
     else:
+        # 散布図はそのまま
         sns.scatterplot(data=df, x=x_col, y=y_col, ax=ax, color="crimson", s=100)
     
     # Y軸を0スタートに強制固定
@@ -197,12 +199,9 @@ if uploaded_files:
             }
             batch_results.append(entry)
             
-            # --- 【修正】Expanderのタイトルを固定（ファイル名のみ） ---
-            # 数値が変わってもタイトルが変わらないので、ウィンドウが閉じなくなる
+            # --- Expanderのタイトルを固定 ---
             with st.expander(f"📷 Image {i+1}: {file.name}", expanded=True):
-                # 数値は中で表示
                 st.markdown(f"### Result: **{val:.2f} {unit}**")
-                
                 c1, c2 = st.columns(2)
                 c1.image(img_rgb, caption="Original", use_container_width=True)
                 c2.image(res_display, caption="Analyzed", use_container_width=True)
@@ -217,17 +216,19 @@ if st.session_state.analysis_history:
     st.header("📈 Analysis Report")
     
     df = pd.DataFrame(st.session_state.analysis_history)
-    
-    # 全データのマイナス値を強制0補正
-    df["Value"] = df["Value"].clip(lower=0)
+    df["Value"] = df["Value"].clip(lower=0) # 強制0補正
 
-    has_trend = df["Is_Trend"].any()
+    # CSVダウンロード
+    st.download_button("📥 CSVデータを保存", df.to_csv(index=False).encode('utf-8'), "data.csv", "text/csv")
     
+    # 画面表示用グラフ & 画像ダウンロード
+    has_trend = df["Is_Trend"].any()
     if has_trend:
         df_trend = df[df["Is_Trend"] == True].sort_values(by="Ratio_Value")
         
         tab1, tab2 = st.tabs(["📊 棒グラフ", "📈 散布図"])
         with tab1:
+            # Altair (確認用・データ点あり)
             chart = alt.Chart(df_trend).mark_bar().encode(
                 x=alt.X('Group', sort=None),
                 y=alt.Y('Value', scale=alt.Scale(domainMin=0), title=df_trend['Unit'].iloc[0]),
@@ -235,8 +236,9 @@ if st.session_state.analysis_history:
             ).interactive()
             st.altair_chart(chart, use_container_width=True)
             
+            # DL用画像 (エラーバー・プロットなし)
             img_buf = generate_static_plot(df_trend, "Group", "Value", "bar")
-            st.download_button("📸 グラフ画像を保存 (Bar)", img_buf, "bar_chart.png", "image/png")
+            st.download_button("📸 シンプルな棒グラフ画像を保存", img_buf, "simple_bar_chart.png", "image/png")
 
         with tab2:
             chart_sc = alt.Chart(df_trend).mark_circle(size=100, color="crimson").encode(
@@ -247,9 +249,9 @@ if st.session_state.analysis_history:
             st.altair_chart(chart_sc, use_container_width=True)
             
             img_buf_sc = generate_static_plot(df_trend, "Ratio_Value", "Value", "scatter")
-            st.download_button("📸 グラフ画像を保存 (Scatter)", img_buf_sc, "scatter_chart.png", "image/png")
-
+            st.download_button("📸 散布図画像を保存", img_buf_sc, "scatter_chart.png", "image/png")
     else:
+        # Altair (確認用)
         chart = alt.Chart(df).mark_bar().encode(
             x=alt.X('Group', sort=None),
             y=alt.Y('Value', scale=alt.Scale(domainMin=0), title=df['Unit'].iloc[-1]),
@@ -257,9 +259,8 @@ if st.session_state.analysis_history:
         ).interactive()
         st.altair_chart(chart, use_container_width=True)
         
+        # DL用画像
         img_buf = generate_static_plot(df, "Group", "Value", "bar")
-        st.download_button("📸 グラフ画像を保存", img_buf, "analysis_chart.png", "image/png")
+        st.download_button("📸 シンプルな棒グラフ画像を保存", img_buf, "analysis_chart.png", "image/png")
 
-    st.divider()
     st.dataframe(df, use_container_width=True)
-    st.download_button("📥 CSVデータを保存", df.to_csv(index=False).encode('utf-8'), "data.csv", "text/csv")
