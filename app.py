@@ -2,7 +2,8 @@ import streamlit as st
 import cv2
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+import altair as alt # インタラクティブグラフ用
+import matplotlib.pyplot as plt # ダウンロード画像生成用（画面には出さない）
 import seaborn as sns
 import io
 
@@ -12,7 +13,7 @@ if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
 st.title("🔬 Bio-Image Quantifier: Pro Edition")
-st.caption("2025年最終版：0%下限固定・グラフ画像ダウンロード機能付き")
+st.caption("2025年最終版：スマートグラフ表示 + レポート画像DL機能")
 
 # --- 色定義 ---
 COLOR_MAP = {
@@ -46,11 +47,27 @@ def get_centroids(mask):
             pts.append(np.array([M["m10"]/M["m00"], M["m01"]/M["m00"]]))
     return pts
 
-# --- グラフ画像をバッファに保存する関数 ---
-def save_plot_to_buffer(fig):
+# --- 裏方：ダウンロード用グラフ画像を生成する関数（画面表示はしない） ---
+def generate_static_plot(df, x_col, y_col, plot_type="bar"):
+    # スタイル設定
+    sns.set_style("whitegrid")
+    fig, ax = plt.subplots(figsize=(8, 5))
+    
+    if plot_type == "bar":
+        sns.barplot(data=df, x=x_col, y=y_col, ax=ax, palette="viridis", capsize=.1)
+        sns.stripplot(data=df, x=x_col, y=y_col, ax=ax, color=".2", jitter=True)
+    else:
+        sns.scatterplot(data=df, x=x_col, y=y_col, ax=ax, color="crimson", s=100)
+    
+    # 0%固定設定
+    ax.set_ylim(bottom=0)
+    ax.set_ylabel(df['Unit'].iloc[0])
+    
+    # バッファに保存
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
     buf.seek(0)
+    plt.close(fig) # メモリ解放
     return buf
 
 # --- サイドバー ---
@@ -96,7 +113,6 @@ with st.sidebar:
     else:
         sample_group = st.text_input("グループ名 (X軸):", value="Control")
         st.divider()
-        # 各モードのパラメータ設定
         if mode == "1. 単色面積率 (Area)":
             target_a = st.selectbox("解析色:", list(COLOR_MAP.keys()))
             sens_a = st.slider("感度", 5, 50, 20)
@@ -124,14 +140,11 @@ with st.sidebar:
         st.session_state.analysis_history = []
         st.rerun()
 
-# --- メインエリア：一括アップロード & 詳細表示 ---
-uploaded_files = st.file_uploader("画像をまとめてアップロード (複数選択可)", 
-                                  type=["jpg", "png", "tif"], 
-                                  accept_multiple_files=True)
+# --- メインエリア ---
+uploaded_files = st.file_uploader("画像をまとめてアップロード", type=["jpg", "png", "tif"], accept_multiple_files=True)
 
 if uploaded_files:
-    st.success(f"{len(uploaded_files)} 枚の画像を読み込みました。解析結果を確認してください。")
-    
+    st.success(f"{len(uploaded_files)} 枚の画像を解析中...")
     batch_results = []
     
     for i, file in enumerate(uploaded_files):
@@ -183,7 +196,7 @@ if uploaded_files:
                 unit = "px Dist"
                 res_display = cv2.addWeighted(img_rgb, 0.6, cv2.merge([mask_a, mask_b, np.zeros_like(mask_a)]), 0.4, 0)
             
-            # --- 【修正】計算誤差でマイナスにならないよう念のため補正 ---
+            # --- 数値補正 (0未満防止) ---
             val = max(0.0, val)
 
             entry = {
@@ -195,18 +208,16 @@ if uploaded_files:
             }
             batch_results.append(entry)
             
-            header_text = f"📷 Image {i+1}: {file.name} - Result: {val:.2f} {unit}"
-            with st.expander(header_text, expanded=True):
+            with st.expander(f"📷 Result: {val:.2f} {unit} | {file.name}"):
                 c1, c2 = st.columns(2)
-                c1.image(img_rgb, caption="Original Image", use_container_width=True)
-                c2.image(res_display, caption="Analysis Result", use_container_width=True)
+                c1.image(img_rgb, caption="Original", use_container_width=True)
+                c2.image(res_display, caption="Analyzed", use_container_width=True)
 
-    st.divider()
-    if st.button(f"これら {len(batch_results)} 件の全データをグラフに追加", type="primary"):
+    if st.button(f"データ {len(batch_results)} 件を追加", type="primary"):
         st.session_state.analysis_history.extend(batch_results)
-        st.success(f"✅ 追加しました！")
+        st.rerun()
 
-# --- グラフ描画 & ダウンロードセクション ---
+# --- レポート表示セクション (Altairで綺麗に表示 + ダウンロード機能) ---
 if st.session_state.analysis_history:
     st.divider()
     st.header("📈 Analysis Report")
@@ -214,50 +225,52 @@ if st.session_state.analysis_history:
     df = pd.DataFrame(st.session_state.analysis_history)
     has_trend = df["Is_Trend"].any()
     
-    # --- 共通スタイル設定 ---
-    sns.set_style("whitegrid")
-    
+    # --- 表示用グラフ (Altair: インタラクティブ・0起点) ---
     if has_trend:
         df_trend = df[df["Is_Trend"] == True].sort_values(by="Ratio_Value")
         
-        tab1, tab2 = st.tabs(["📊 棒グラフ (Bar)", "📈 散布図 (Scatter)"])
+        tab1, tab2 = st.tabs(["📊 棒グラフ", "📈 散布図"])
         
         with tab1:
-            fig1, ax1 = plt.subplots(figsize=(8, 5))
-            sns.barplot(data=df_trend, x="Group", y="Value", ax=ax1, palette="viridis", capsize=.1)
-            sns.stripplot(data=df_trend, x="Group", y="Value", ax=ax1, color=".2", jitter=True)
-            ax1.set_ylabel(df_trend['Unit'].iloc[0])
-            ax1.set_ylim(bottom=0)  # 【修正】Y軸を0からスタート固定
+            # Altairで棒グラフを作成 (Y軸0固定)
+            chart = alt.Chart(df_trend).mark_bar().encode(
+                x=alt.X('Group', sort=None),
+                y=alt.Y('Value', scale=alt.Scale(domainMin=0), title=df_trend['Unit'].iloc[0]),
+                tooltip=['Group', 'Value', 'Unit']
+            ).interactive()
             
-            st.pyplot(fig1)
-            # ダウンロードボタン
-            buf1 = save_plot_to_buffer(fig1)
-            st.download_button("📸 棒グラフを画像として保存", buf1, "bar_chart.png", "image/png")
+            st.altair_chart(chart, use_container_width=True)
+            
+            # ダウンロードボタン (裏でMatplotlib画像を生成)
+            img_buf = generate_static_plot(df_trend, "Group", "Value", "bar")
+            st.download_button("📸 グラフ画像を保存 (Bar)", img_buf, "bar_chart.png", "image/png")
 
         with tab2:
-            fig2, ax2 = plt.subplots(figsize=(8, 5))
-            sns.scatterplot(data=df_trend, x="Ratio_Value", y="Value", ax=ax2, color="crimson", s=100)
-            ax2.set_xlabel("Ratio Value")
-            ax2.set_ylabel(df_trend['Unit'].iloc[0])
-            ax2.set_ylim(bottom=0)  # 【修正】Y軸を0からスタート固定
+            # Altairで散布図を作成 (Y軸0固定)
+            chart_sc = alt.Chart(df_trend).mark_circle(size=100, color="crimson").encode(
+                x=alt.X('Ratio_Value', title='Ratio Value'),
+                y=alt.Y('Value', scale=alt.Scale(domainMin=0), title=df_trend['Unit'].iloc[0]),
+                tooltip=['Ratio_Value', 'Value', 'Unit']
+            ).interactive()
             
-            st.pyplot(fig2)
+            st.altair_chart(chart_sc, use_container_width=True)
+            
             # ダウンロードボタン
-            buf2 = save_plot_to_buffer(fig2)
-            st.download_button("📸 散布図を画像として保存", buf2, "scatter_chart.png", "image/png")
-            
+            img_buf_sc = generate_static_plot(df_trend, "Ratio_Value", "Value", "scatter")
+            st.download_button("📸 グラフ画像を保存 (Scatter)", img_buf_sc, "scatter_chart.png", "image/png")
+
     else:
-        # 通常モード
-        fig, ax = plt.subplots(figsize=(8, 5))
-        sns.barplot(data=df, x="Group", y="Value", ax=ax, palette="muted", capsize=.1)
-        sns.stripplot(data=df, x="Group", y="Value", ax=ax, color=".2", jitter=True)
-        ax.set_ylabel(df['Unit'].iloc[-1])
-        ax.set_ylim(bottom=0)  # 【修正】Y軸を0からスタート固定
+        # 通常モード (棒グラフのみ)
+        chart = alt.Chart(df).mark_bar().encode(
+            x=alt.X('Group', sort=None),
+            y=alt.Y('Value', scale=alt.Scale(domainMin=0), title=df['Unit'].iloc[-1]),
+            tooltip=['Group', 'Value', 'Unit']
+        ).interactive()
         
-        st.pyplot(fig)
-        # ダウンロードボタン
-        buf = save_plot_to_buffer(fig)
-        st.download_button("📸 グラフを画像として保存", buf, "analysis_chart.png", "image/png")
+        st.altair_chart(chart, use_container_width=True)
+        
+        img_buf = generate_static_plot(df, "Group", "Value", "bar")
+        st.download_button("📸 グラフ画像を保存", img_buf, "analysis_chart.png", "image/png")
 
     st.divider()
     st.dataframe(df, use_container_width=True)
