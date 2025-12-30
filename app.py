@@ -2,8 +2,8 @@ import streamlit as st
 import cv2
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
+
+# Matplotlib/Seabornは削除（「写真」のようになる原因のため）
 
 st.set_page_config(page_title="Bio-Image Quantifier Pro", layout="wide")
 
@@ -11,7 +11,7 @@ if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
 st.title("🔬 Bio-Image Quantifier: Pro Edition")
-st.caption("2025年最終版：一括解析＋「元画像との比較確認」機能搭載")
+st.caption("2025年最終版：インタラクティブ・グラフ搭載")
 
 # --- 色定義 ---
 COLOR_MAP = {
@@ -186,7 +186,6 @@ if uploaded_files:
             }
             batch_results.append(entry)
             
-            # --- 単位(unit)をヘッダーに表示 ---
             header_text = f"📷 Image {i+1}: {file.name} - Result: {val:.2f} {unit}"
             with st.expander(header_text, expanded=True):
                 c1, c2 = st.columns(2)
@@ -199,7 +198,7 @@ if uploaded_files:
         st.session_state.analysis_history.extend(batch_results)
         st.success(f"✅ 追加しました！")
 
-# --- グラフ描画セクション (復活) ---
+# --- グラフ描画セクション (修正版) ---
 if st.session_state.analysis_history:
     st.divider()
     st.header("📈 Analysis Report")
@@ -207,30 +206,23 @@ if st.session_state.analysis_history:
     df = pd.DataFrame(st.session_state.analysis_history)
     has_trend = df["Is_Trend"].any()
     
-    # グラフ表示
+    # 【変更点】Seaborn/Matplotlib (バーとプロット) を廃止し、
+    # Streamlitのネイティブチャート(st.bar_chart / st.scatter_chart)を使用
+    
     if has_trend:
         df_trend = df[df["Is_Trend"] == True].sort_values(by="Ratio_Value")
         
         tab1, tab2 = st.tabs(["棒グラフ (Bar)", "散布図 (Scatter)"])
         with tab1:
-            fig, ax = plt.subplots(figsize=(8, 5))
-            sns.barplot(data=df_trend, x="Group", y="Value", ax=ax, palette="viridis", capsize=.1)
-            sns.stripplot(data=df_trend, x="Group", y="Value", ax=ax, color=".2", jitter=True)
-            ax.set_ylabel(df_trend['Unit'].iloc[0])
-            st.pyplot(fig)
+            # シンプルな棒グラフ (X: Group, Y: Value)
+            st.bar_chart(df_trend, x="Group", y="Value")
         with tab2:
-            fig, ax = plt.subplots(figsize=(8, 5))
-            sns.scatterplot(data=df_trend, x="Ratio_Value", y="Value", ax=ax, color="crimson", s=100)
-            ax.set_xlabel("Ratio Value")
-            ax.set_ylabel(df_trend['Unit'].iloc[0])
-            st.pyplot(fig)
+            # 散布図 (X: Ratio_Value, Y: Value)
+            st.scatter_chart(df_trend, x="Ratio_Value", y="Value")
     else:
-        fig, ax = plt.subplots(figsize=(8, 5))
-        sns.barplot(data=df, x="Group", y="Value", ax=ax, palette="muted", capsize=.1)
-        sns.stripplot(data=df, x="Group", y="Value", ax=ax, color=".2", jitter=True)
-        ax.set_ylabel(df['Unit'].iloc[-1])
-        st.pyplot(fig)
+        # 通常モード：シンプルな棒グラフ
+        st.bar_chart(df, x="Group", y="Value")
 
     # データテーブルとCSV
-    st.dataframe(df)
+    st.dataframe(df, use_container_width=True)
     st.download_button("CSV保存", df.to_csv(index=False).encode('utf-8'), "data.csv", "text/csv")
