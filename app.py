@@ -6,26 +6,25 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
 
-st.set_page_config(page_title="Bio-Image Quantifier Fixed", layout="wide")
+st.set_page_config(page_title="Bio-Image Quantifier Downloadable", layout="wide")
 
 if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
-st.title("🔬 Bio-Image Quantifier: Precision Edition")
-st.caption("2025年完遂仕様：色逆転バグ修正 & 赤色検出強化版")
+st.title("🔬 Bio-Image Quantifier: Ultimate Edition")
+st.caption("2025年完遂仕様：全色対応・統計エンジン・画像保存機能搭載")
 
-# --- 色定義 (HSV: OpenCVスケール H:0-180, S:0-255, V:0-255) ---
-# 赤色は0付近と180付近の両方にあるため、特殊処理します
-COLOR_RANGES = {
+# --- 色定義 ---
+COLOR_MAP = {
     "茶色 (DAB)": {"lower": np.array([10, 50, 20]), "upper": np.array([30, 255, 255])},
-    "緑 (GFP)":   {"lower": np.array([35, 50, 50]), "upper": np.array([85, 255, 255])},
-    "青 (DAPI)":  {"lower": np.array([100, 50, 50]), "upper": np.array([140, 255, 255])},
-    # 赤は関数内で別途定義
+    "緑 (GFP)": {"lower": np.array([35, 50, 50]), "upper": np.array([85, 255, 255])},
+    "赤 (RFP)": {"lower": np.array([0, 50, 50]), "upper": np.array([10, 255, 255])},
+    "青 (DAPI)": {"lower": np.array([100, 50, 50]), "upper": np.array([140, 255, 255])}
 }
 
+# --- ヘルパー関数 ---
 def get_mask(hsv_img, color_name, sens):
     if color_name == "赤 (RFP)":
-        # 赤は色相環の0度付近と180度付近の両方を拾う必要がある
         lower1 = np.array([0, 50, 50])
         upper1 = np.array([10 + sens//2, 255, 255])
         lower2 = np.array([170 - sens//2, 50, 50])
@@ -34,7 +33,7 @@ def get_mask(hsv_img, color_name, sens):
         mask2 = cv2.inRange(hsv_img, lower2, upper2)
         return mask1 | mask2
     else:
-        conf = COLOR_RANGES[color_name]
+        conf = COLOR_MAP[color_name]
         l = np.clip(conf["lower"] - sens, 0, 255)
         u = np.clip(conf["upper"] + sens, 0, 255)
         return cv2.inRange(hsv_img, l, u)
@@ -60,24 +59,24 @@ with st.sidebar:
     sample_group = st.text_input("グループ名 (X軸):", value="Control")
     st.divider()
 
+    # パラメータ設定
     if mode == "1. 単色面積率 (Area)":
-        target_a = st.selectbox("解析する色:", ["茶色 (DAB)", "緑 (GFP)", "赤 (RFP)", "青 (DAPI)"])
+        target_a = st.selectbox("解析する色:", list(COLOR_MAP.keys()))
         sens_a = st.slider("感度", 10, 100, 40)
     
     elif mode == "2. 細胞核カウント (Count)":
         min_size = st.slider("最小細胞サイズ (px)", 10, 500, 50)
 
     elif mode == "3. 汎用共局在解析 (Colocalization)":
-        st.info("2色の重なりを解析")
-        target_a = st.selectbox("チャンネルA (基準):", ["茶色 (DAB)", "緑 (GFP)", "赤 (RFP)", "青 (DAPI)"], index=1)
-        sens_a = st.slider("A感度", 10, 100, 40)
-        target_b = st.selectbox("チャンネルB (対象):", ["茶色 (DAB)", "緑 (GFP)", "赤 (RFP)", "青 (DAPI)"], index=2)
-        sens_b = st.slider("B感度", 10, 100, 40)
+        target_a = st.selectbox("チャンネルA (基準):", list(COLOR_MAP.keys()), index=1)
+        sens_a = st.slider("チャンネルA感度", 10, 100, 40)
+        target_b = st.selectbox("チャンネルB (対象):", list(COLOR_MAP.keys()), index=2)
+        sens_b = st.slider("チャンネルB感度", 10, 100, 40)
 
     elif mode == "4. 空間距離解析 (Spatial Distance)":
-        target_a = st.selectbox("起点色(A):", ["赤 (RFP)", "緑 (GFP)", "青 (DAPI)"], index=0)
+        target_a = st.selectbox("起点となる色(A):", list(COLOR_MAP.keys()), index=2)
         sens_a = st.slider("起点A感度", 10, 100, 40)
-        target_b = st.selectbox("対象色(B):", ["緑 (GFP)", "青 (DAPI)", "赤 (RFP)"], index=1)
+        target_b = st.selectbox("対象となる色(B):", list(COLOR_MAP.keys()), index=3)
         sens_b = st.slider("対象B感度", 10, 100, 40)
 
     if st.button("履歴をすべて削除"):
@@ -90,10 +89,9 @@ uploaded_file = st.file_uploader("画像をアップロード...", type=["jpg", 
 if uploaded_file:
     uploaded_file.seek(0)
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    img_bgr = cv2.imdecode(file_bytes, 1) # OpenCVはデフォルトでBGR
+    img_bgr = cv2.imdecode(file_bytes, 1)
     
     if img_bgr is not None:
-        # 【修正】ここで確実に RGB に変換してから HSV にする
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         img_hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
         
@@ -121,12 +119,9 @@ if uploaded_file:
             mask_a = get_mask(img_hsv, target_a, sens_a)
             mask_b = get_mask(img_hsv, target_b, sens_b)
             coloc = cv2.bitwise_and(mask_a, mask_b)
-            
             denom = cv2.countNonZero(mask_a)
             val = (cv2.countNonZero(coloc) / denom * 100) if denom > 0 else 0
             unit = f"% ({target_b} in {target_a})"
-            
-            # 基準(A)を緑、対象(B)を赤、重なりを黄色で表示
             res_display = cv2.merge([mask_b, mask_a, np.zeros_like(mask_a)])
 
         # 4. 空間距離
@@ -134,7 +129,6 @@ if uploaded_file:
             mask_a = get_mask(img_hsv, target_a, sens_a)
             mask_b = get_mask(img_hsv, target_b, sens_b)
             pts_a, pts_b = get_centroids(mask_a), get_centroids(mask_b)
-            
             if pts_a and pts_b:
                 dists = []
                 for pa in pts_a:
@@ -146,13 +140,33 @@ if uploaded_file:
             unit = "px"
             res_display = cv2.addWeighted(img_rgb, 0.6, cv2.merge([mask_a, mask_b, np.zeros_like(mask_a)]), 0.4, 0)
 
-        # 表示
+        # --- 表示 & ダウンロード ---
         c1, c2 = st.columns(2)
-        c1.image(img_rgb, caption="Original")
-        c2.image(res_display, caption="Analysis View")
+        with c1:
+            st.image(img_rgb, caption="Original Image", use_container_width=True)
+        with c2:
+            st.image(res_display, caption="Analysis Result", use_container_width=True)
+            
+            # 【重要】画像ダウンロード機能
+            # Streamlitで表示しているRGB画像を、ダウンロード用にBGRに戻してエンコードする
+            # (もしres_displayがモノクロマスクならそのまま、カラーなら変換)
+            if len(res_display.shape) == 2: # モノクロマスクの場合
+                save_img = res_display
+            else: # カラーの場合
+                save_img = cv2.cvtColor(res_display, cv2.COLOR_RGB2BGR)
+                
+            is_success, buffer = cv2.imencode(".png", save_img)
+            if is_success:
+                st.download_button(
+                    label="📷 解析画像をダウンロード (PNG)",
+                    data=buffer.tobytes(),
+                    file_name="analysis_result.png",
+                    mime="image/png"
+                )
+
         st.subheader(f"📊 Result: {val:.2f} {unit}")
         
-        if st.button("履歴に追加"):
+        if st.button("数値を履歴（グラフ）に追加"):
             st.session_state.analysis_history.append({"Group": sample_group, "Value": val, "Unit": unit})
             st.success(f"Added: {val:.2f}")
 
@@ -165,4 +179,9 @@ if st.session_state.analysis_history:
     sns.stripplot(data=df, x="Group", y="Value", ax=ax, color=".2", size=8, jitter=True)
     ax.set_ylabel(f"Value ({df['Unit'].iloc[-1]})")
     st.pyplot(fig)
+    
+    # データをCSVダウンロード
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button("📊 グラフ用データをCSVで保存", csv, "data.csv", "text/csv")
+    
     st.dataframe(df)
