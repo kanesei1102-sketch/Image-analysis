@@ -88,7 +88,7 @@ with st.sidebar:
     else:
         sample_group = st.text_input("グループ名 (X軸):", value="Control")
         st.divider()
-        # 各モードのパラメータ設定（省略なし）
+        # 各モードのパラメータ設定
         if mode == "1. 単色面積率 (Area)":
             target_a = st.selectbox("解析色:", list(COLOR_MAP.keys()))
             sens_a = st.slider("感度", 5, 50, 20)
@@ -143,7 +143,7 @@ if uploaded_files:
             if mode == "1. 単色面積率 (Area)" or (mode.startswith("5.") and trend_metric == "面積率 (Area)"):
                 mask = get_mask(img_hsv, target_a, sens_a, bright_a)
                 val = (cv2.countNonZero(mask) / (img_rgb.shape[0] * img_rgb.shape[1])) * 100
-                unit = f"% Area ({target_a})"
+                unit = f"% Area"
                 res_display = mask
 
             elif mode == "2. 細胞核カウント (Count)":
@@ -186,8 +186,9 @@ if uploaded_files:
             }
             batch_results.append(entry)
             
-            # --- 【修正】 元画像と解析結果を並べて表示 ---
-            with st.expander(f"📷 Image {i+1}: {file.name} - Result: {val:.2f}", expanded=True):
+            # --- 【修正】 単位(unit)をヘッダーに表示 ---
+            header_text = f"📷 Image {i+1}: {file.name} - Result: {val:.2f} {unit}"
+            with st.expander(header_text, expanded=True):
                 c1, c2 = st.columns(2)
                 c1.image(img_rgb, caption="Original Image", use_container_width=True)
                 c2.image(res_display, caption="Analysis Result", use_container_width=True)
