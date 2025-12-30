@@ -2,8 +2,9 @@ import streamlit as st
 import cv2
 import numpy as np
 import pandas as pd
-
-# Matplotlib/Seabornは削除（「写真」のようになる原因のため）
+import matplotlib.pyplot as plt
+import seaborn as sns
+import io
 
 st.set_page_config(page_title="Bio-Image Quantifier Pro", layout="wide")
 
@@ -11,7 +12,7 @@ if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
 st.title("🔬 Bio-Image Quantifier: Pro Edition")
-st.caption("2025年最終版：インタラクティブ・グラフ搭載")
+st.caption("2025年最終版：0%下限固定・グラフ画像ダウンロード機能付き")
 
 # --- 色定義 ---
 COLOR_MAP = {
@@ -44,6 +45,13 @@ def get_centroids(mask):
         if M["m00"] != 0:
             pts.append(np.array([M["m10"]/M["m00"], M["m01"]/M["m00"]]))
     return pts
+
+# --- グラフ画像をバッファに保存する関数 ---
+def save_plot_to_buffer(fig):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
+    buf.seek(0)
+    return buf
 
 # --- サイドバー ---
 with st.sidebar:
@@ -126,7 +134,6 @@ if uploaded_files:
     
     batch_results = []
     
-    # 画像ごとに詳細表示ループ
     for i, file in enumerate(uploaded_files):
         file.seek(0)
         file_bytes = np.asarray(bytearray(file.read()), dtype=np.uint8)
@@ -176,7 +183,9 @@ if uploaded_files:
                 unit = "px Dist"
                 res_display = cv2.addWeighted(img_rgb, 0.6, cv2.merge([mask_a, mask_b, np.zeros_like(mask_a)]), 0.4, 0)
             
-            # --- 結果の保存 ---
+            # --- 【修正】計算誤差でマイナスにならないよう念のため補正 ---
+            val = max(0.0, val)
+
             entry = {
                 "Group": sample_group,
                 "Value": val,
@@ -192,13 +201,12 @@ if uploaded_files:
                 c1.image(img_rgb, caption="Original Image", use_container_width=True)
                 c2.image(res_display, caption="Analysis Result", use_container_width=True)
 
-    # --- 一括登録ボタン ---
     st.divider()
     if st.button(f"これら {len(batch_results)} 件の全データをグラフに追加", type="primary"):
         st.session_state.analysis_history.extend(batch_results)
         st.success(f"✅ 追加しました！")
 
-# --- グラフ描画セクション (修正版) ---
+# --- グラフ描画 & ダウンロードセクション ---
 if st.session_state.analysis_history:
     st.divider()
     st.header("📈 Analysis Report")
@@ -206,23 +214,51 @@ if st.session_state.analysis_history:
     df = pd.DataFrame(st.session_state.analysis_history)
     has_trend = df["Is_Trend"].any()
     
-    # 【変更点】Seaborn/Matplotlib (バーとプロット) を廃止し、
-    # Streamlitのネイティブチャート(st.bar_chart / st.scatter_chart)を使用
+    # --- 共通スタイル設定 ---
+    sns.set_style("whitegrid")
     
     if has_trend:
         df_trend = df[df["Is_Trend"] == True].sort_values(by="Ratio_Value")
         
-        tab1, tab2 = st.tabs(["棒グラフ (Bar)", "散布図 (Scatter)"])
+        tab1, tab2 = st.tabs(["📊 棒グラフ (Bar)", "📈 散布図 (Scatter)"])
+        
         with tab1:
-            # シンプルな棒グラフ (X: Group, Y: Value)
-            st.bar_chart(df_trend, x="Group", y="Value")
-        with tab2:
-            # 散布図 (X: Ratio_Value, Y: Value)
-            st.scatter_chart(df_trend, x="Ratio_Value", y="Value")
-    else:
-        # 通常モード：シンプルな棒グラフ
-        st.bar_chart(df, x="Group", y="Value")
+            fig1, ax1 = plt.subplots(figsize=(8, 5))
+            sns.barplot(data=df_trend, x="Group", y="Value", ax=ax1, palette="viridis", capsize=.1)
+            sns.stripplot(data=df_trend, x="Group", y="Value", ax=ax1, color=".2", jitter=True)
+            ax1.set_ylabel(df_trend['Unit'].iloc[0])
+            ax1.set_ylim(bottom=0)  # 【修正】Y軸を0からスタート固定
+            
+            st.pyplot(fig1)
+            # ダウンロードボタン
+            buf1 = save_plot_to_buffer(fig1)
+            st.download_button("📸 棒グラフを画像として保存", buf1, "bar_chart.png", "image/png")
 
-    # データテーブルとCSV
+        with tab2:
+            fig2, ax2 = plt.subplots(figsize=(8, 5))
+            sns.scatterplot(data=df_trend, x="Ratio_Value", y="Value", ax=ax2, color="crimson", s=100)
+            ax2.set_xlabel("Ratio Value")
+            ax2.set_ylabel(df_trend['Unit'].iloc[0])
+            ax2.set_ylim(bottom=0)  # 【修正】Y軸を0からスタート固定
+            
+            st.pyplot(fig2)
+            # ダウンロードボタン
+            buf2 = save_plot_to_buffer(fig2)
+            st.download_button("📸 散布図を画像として保存", buf2, "scatter_chart.png", "image/png")
+            
+    else:
+        # 通常モード
+        fig, ax = plt.subplots(figsize=(8, 5))
+        sns.barplot(data=df, x="Group", y="Value", ax=ax, palette="muted", capsize=.1)
+        sns.stripplot(data=df, x="Group", y="Value", ax=ax, color=".2", jitter=True)
+        ax.set_ylabel(df['Unit'].iloc[-1])
+        ax.set_ylim(bottom=0)  # 【修正】Y軸を0からスタート固定
+        
+        st.pyplot(fig)
+        # ダウンロードボタン
+        buf = save_plot_to_buffer(fig)
+        st.download_button("📸 グラフを画像として保存", buf, "analysis_chart.png", "image/png")
+
+    st.divider()
     st.dataframe(df, use_container_width=True)
-    st.download_button("CSV保存", df.to_csv(index=False).encode('utf-8'), "data.csv", "text/csv")
+    st.download_button("📥 CSVデータを保存", df.to_csv(index=False).encode('utf-8'), "data.csv", "text/csv")
