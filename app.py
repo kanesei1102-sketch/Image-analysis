@@ -48,6 +48,20 @@ def get_centroids(mask):
 
 # --- サイドバー ---
 with st.sidebar:
+        # 既存の入力フォームなどのコード...
+        st.write("---") # 区切り線
+        st.markdown("""
+        ### 【Notice / ご案内】
+        This tool is a beta version. If you plan to use results from this tool in your publications or conference presentations, **please contact the developer (Seiji Kaneko) in advance.**
+
+        本ツールは現在開発中のベータ版です。論文掲載や学会発表等に使用される際は、**事前に開発者（金子）まで必ず一報ください。**
+
+        👉 **[Contact & Feedback Form / 連絡窓口](https://forms.gle/xgNscMi3KFfWcuZ1A)**
+
+        We will provide guidance on validation support and proper acknowledgments/co-authorship.
+        バリデーションのサポートや、謝辞・共著の記載についてご案内させていただきます。
+        """)
+with st.sidebar:
     st.header("Analysis Recipe")
     mode = st.selectbox("解析モードを選択:", [
         "1. 単色面積率 (Area)",
