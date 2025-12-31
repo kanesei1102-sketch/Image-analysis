@@ -109,6 +109,18 @@ with st.sidebar:
     if st.button("履歴を全消去"):
         st.session_state.analysis_history = []
         st.rerun()
+        # --- サイドバーの最後の方に追加 ---
+    with st.sidebar:
+        st.divider()
+        st.caption("【免責事項 / Disclaimer】")
+        st.caption("""
+        本ツールは画像解析の補助を目的としています。
+        照明条件や設定により結果が変動するため、最終的な解釈および結論については、
+        利用者が専門的知見に基づいて判断してください。
+    
+        This tool is for assistive purposes. Final interpretations should be 
+        made by the user based on professional expertise.
+        """)
 
 # --- メインエリア ---
 uploaded_files = st.file_uploader("画像をまとめてアップロード", type=["jpg", "png", "tif"], accept_multiple_files=True)
