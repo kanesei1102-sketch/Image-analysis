@@ -2,18 +2,17 @@ import streamlit as st
 import cv2
 import numpy as np
 import pandas as pd
-import altair as alt
-import matplotlib.pyplot as plt
-import seaborn as sns
-import io
+import datetime  # JST日時取得用
 
-st.set_page_config(page_title="Bio-Image Quantifier Pro", layout="wide")
+# グラフ描画ライブラリ（altair, matplotlib, seaborn）のインポートを削除
+
+st.set_page_config(page_title="Bio-Image Quantifier Pro (Extraction Only)", layout="wide")
 
 if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
-st.title("🔬 Bio-Image Quantifier: Pro Edition")
-st.caption("2025年最終版：シンプル棒グラフ画像DL (エラーバー・プロットなし)")
+st.title("🔬 Bio-Image Quantifier: Pro Edition (Extraction)")
+st.caption("2025年最終版：解析・データ抽出専用（グラフ機能なし）")
 
 # --- 色定義 ---
 COLOR_MAP = {
@@ -46,29 +45,6 @@ def get_centroids(mask):
         if M["m00"] != 0:
             pts.append(np.array([M["m10"]/M["m00"], M["m01"]/M["m00"]]))
     return pts
-
-# --- 裏方：ダウンロード用グラフ画像を生成する関数 ---
-# 【修正】エラーバー(errorbar=None)も削除し、完全に棒だけにする
-def generate_static_plot(df, x_col, y_col, plot_type="bar"):
-    sns.set_style("whitegrid")
-    fig, ax = plt.subplots(figsize=(8, 5))
-    
-    if plot_type == "bar":
-        # errorbar=None でエラーバーを消去
-        sns.barplot(data=df, x=x_col, y=y_col, ax=ax, palette="viridis", errorbar=None)
-    else:
-        # 散布図はそのまま
-        sns.scatterplot(data=df, x=x_col, y=y_col, ax=ax, color="crimson", s=100)
-    
-    # Y軸を0スタートに強制固定
-    ax.set_ylim(bottom=0)
-    ax.set_ylabel(df['Unit'].iloc[0])
-    
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
-    buf.seek(0)
-    plt.close(fig)
-    return buf
 
 # --- サイドバー ---
 with st.sidebar:
@@ -130,7 +106,7 @@ with st.sidebar:
             sens_common = st.slider("色感度", 5, 50, 20)
             bright_common = st.slider("輝度", 0, 255, 60)
 
-    if st.button("履歴・グラフを全消去"):
+    if st.button("履歴を全消去"):
         st.session_state.analysis_history = []
         st.rerun()
 
@@ -210,57 +186,17 @@ if uploaded_files:
         st.session_state.analysis_history.extend(batch_results)
         st.rerun()
 
-# --- レポート表示セクション ---
+# --- レポート表示セクション (データのみ) ---
 if st.session_state.analysis_history:
     st.divider()
-    st.header("📈 Analysis Report")
+    st.header("💾 Data Export")
     
     df = pd.DataFrame(st.session_state.analysis_history)
-    df["Value"] = df["Value"].clip(lower=0) # 強制0補正
+    df["Value"] = df["Value"].clip(lower=0) 
 
-    # CSVダウンロード
-    st.download_button("📥 CSVデータを保存", df.to_csv(index=False).encode('utf-8'), "data.csv", "text/csv")
-    
-    # 画面表示用グラフ & 画像ダウンロード
-    has_trend = df["Is_Trend"].any()
-    if has_trend:
-        df_trend = df[df["Is_Trend"] == True].sort_values(by="Ratio_Value")
-        
-        tab1, tab2 = st.tabs(["📊 棒グラフ", "📈 散布図"])
-        with tab1:
-            # Altair (確認用・データ点あり)
-            chart = alt.Chart(df_trend).mark_bar().encode(
-                x=alt.X('Group', sort=None),
-                y=alt.Y('Value', scale=alt.Scale(domainMin=0), title=df_trend['Unit'].iloc[0]),
-                tooltip=['Group', 'Value', 'Unit']
-            ).interactive()
-            st.altair_chart(chart, use_container_width=True)
-            
-            # DL用画像 (エラーバー・プロットなし)
-            img_buf = generate_static_plot(df_trend, "Group", "Value", "bar")
-            st.download_button("📸 シンプルな棒グラフ画像を保存", img_buf, "simple_bar_chart.png", "image/png")
-
-        with tab2:
-            chart_sc = alt.Chart(df_trend).mark_circle(size=100, color="crimson").encode(
-                x=alt.X('Ratio_Value', title='Ratio Value'),
-                y=alt.Y('Value', scale=alt.Scale(domainMin=0), title=df_trend['Unit'].iloc[0]),
-                tooltip=['Ratio_Value', 'Value', 'Unit']
-            ).interactive()
-            st.altair_chart(chart_sc, use_container_width=True)
-            
-            img_buf_sc = generate_static_plot(df_trend, "Ratio_Value", "Value", "scatter")
-            st.download_button("📸 散布図画像を保存", img_buf_sc, "scatter_chart.png", "image/png")
-    else:
-        # Altair (確認用)
-        chart = alt.Chart(df).mark_bar().encode(
-            x=alt.X('Group', sort=None),
-            y=alt.Y('Value', scale=alt.Scale(domainMin=0), title=df['Unit'].iloc[-1]),
-            tooltip=['Group', 'Value', 'Unit']
-        ).interactive()
-        st.altair_chart(chart, use_container_width=True)
-        
-        # DL用画像
-        img_buf = generate_static_plot(df, "Group", "Value", "bar")
-        st.download_button("📸 シンプルな棒グラフ画像を保存", img_buf, "analysis_chart.png", "image/png")
+    # 日本時間(JST)のファイル名を生成
+    now = datetime.datetime.now() + datetime.timedelta(hours=9)
+    file_name = f"quantified_data_{now.strftime('%Y%m%d_%H%M%S')}.csv"
 
     st.dataframe(df, use_container_width=True)
+    st.download_button("📥 CSVデータを保存", df.to_csv(index=False).encode('utf-8'), file_name, "text/csv")
