@@ -106,7 +106,7 @@ with st.sidebar:
         
         elif mode == "2. 細胞核カウント (Count)":
             min_size = st.slider("最小サイズ(px)", 10, 500, 50)
-            bright_count = st.slider("輝度しきい値", 0, 255, 50)
+            bright_count = st.slider("細胞輝度しきい値", 0, 255, 50)
             
             # --- ★追加機能: 組織エリア正規化 ---
             st.divider()
@@ -190,7 +190,10 @@ if uploaded_files:
                 mask = get_mask(img_hsv, target_a, sens_a, bright_a)
                 val = (cv2.countNonZero(mask) / (img_rgb.shape[0] * img_rgb.shape[1])) * 100
                 unit = f"% Area"
-                res_display = mask
+                res_display = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB) # 表示用にRGB化
+                # 緑色に着色して表示
+                res_display[:, :, 0] = 0
+                res_display[:, :, 2] = 0
                 
                 # 実面積計算
                 real_area_str = ""
@@ -198,7 +201,7 @@ if uploaded_files:
                     real_area = fov_area_mm2 * (val / 100)
                     real_area_str = f"{real_area:.4f} mm²"
 
-            # 2. カウント (Count)
+            # 2. カウント (Count) - 【修正箇所】
             elif mode == "2. 細胞核カウント (Count)":
                 gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
                 _, th = cv2.threshold(gray, bright_count, 255, cv2.THRESH_BINARY)
@@ -208,23 +211,31 @@ if uploaded_files:
                 cnts, _ = cv2.findContours(final, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 valid = [c for c in cnts if cv2.contourArea(c) > min_size]
                 val, unit = len(valid), "cells"
+                
+                # 画像描画: 細胞を緑で囲む
                 cv2.drawContours(res_display, valid, -1, (0,255,0), 2)
                 
-                # --- ★追加ロジック: 密度計算 (ROI or FOV) ---
+                # --- ★修正: 密度計算とROI可視化 ---
                 density_str = ""
                 if scale_val > 0:
                     # A. 組織エリア指定がある場合
                     if 'use_roi_norm' in locals() and use_roi_norm:
+                        # 組織マスクを作成
                         mask_roi = get_mask(img_hsv, roi_color, sens_roi, bright_roi)
                         roi_pixel_count = cv2.countNonZero(mask_roi)
+                        
+                        # 面積計算 (mm2)
                         real_roi_area_mm2 = roi_pixel_count * ((scale_val / 1000) ** 2)
                         
                         if real_roi_area_mm2 > 0:
                             density = val / real_roi_area_mm2
                             density_str = f"{int(density):,} cells/mm² (ROI)"
-                            # 組織エリアを赤枠で表示
+                            
+                            # 【重要】分母となる組織エリアを「赤色」の太枠で描画する
                             contours_roi, _ = cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                            cv2.drawContours(res_display, contours_roi, -1, (0,0,255), 1)
+                            cv2.drawContours(res_display, contours_roi, -1, (255,0,0), 3) 
+                        else:
+                            density_str = "ROI Area is 0"
 
                     # B. 指定がない場合 (全体面積)
                     elif fov_area_mm2 > 0:
