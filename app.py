@@ -119,7 +119,11 @@ with st.sidebar:
             target_b = st.selectbox("対象B:", list(COLOR_MAP.keys()), index=3)
             sens_common = st.slider("色感度", 5, 50, 20)
             bright_common = st.slider("輝度", 0, 255, 60)
-
+　　st.divider()
+    with st.expander("📏 スケール設定 (Calibration)", expanded=True):
+        st.caption("1ピクセルあたりの実寸を入力すると、面積(mm²)や密度(cells/mm²)を自動算出します。")
+        scale_val = st.number_input("1pxの長さ (μm/px)", value=0.0, step=0.1, format="%.4f", help="0の場合、ピクセル単位のみで計算します")
+        
     if st.button("履歴を全消去"):
         st.session_state.analysis_history = []
         st.rerun()
@@ -154,6 +158,12 @@ if uploaded_files:
             
             val, unit = 0.0, ""
             res_display = img_rgb.copy()
+
+            fov_area_mm2 = 0.0
+            if scale_val > 0:
+                h, w = img_rgb.shape[:2]
+                # (縦px * 横px) * (μm/px / 1000)^2 = mm2
+                fov_area_mm2 = (h * w) * ((scale_val / 1000) ** 2)
             
             # --- 解析ロジック ---
             if mode == "1. 単色面積率 (Area)" or (mode.startswith("5.") and trend_metric == "面積率 (Area)"):
