@@ -4,17 +4,18 @@ import numpy as np
 import pandas as pd
 import datetime  # JST日時取得用
 
-# グラフ描画ライブラリ（altair, matplotlib, seaborn）のインポートを削除
-
+# ---------------------------------------------------------
+# 0. ページ設定
+# ---------------------------------------------------------
 st.set_page_config(page_title="Bio-Image Quantifier Pro (Extraction Only)", layout="wide")
 
 if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
-st.title("🔬 Bio-Image Quantifier: Pro Edition (Extraction)")
-st.caption("2025年最終版：解析・データ抽出専用（グラフ機能なし）")
-
-# --- 色定義 ---
+# ---------------------------------------------------------
+# 1. 関数定義
+# ---------------------------------------------------------
+# 色定義
 COLOR_MAP = {
     "茶色 (DAB)": {"lower": np.array([10, 50, 20]), "upper": np.array([30, 255, 255])},
     "緑 (GFP)": {"lower": np.array([35, 50, 50]), "upper": np.array([85, 255, 255])},
@@ -22,7 +23,6 @@ COLOR_MAP = {
     "青 (DAPI)": {"lower": np.array([100, 50, 50]), "upper": np.array([140, 255, 255])}
 }
 
-# --- 関数群 ---
 def get_mask(hsv_img, color_name, sens, bright_min):
     if color_name == "赤 (RFP)":
         lower1 = np.array([0, 30, bright_min])
@@ -46,22 +46,23 @@ def get_centroids(mask):
             pts.append(np.array([M["m10"]/M["m00"], M["m01"]/M["m00"]]))
     return pts
 
-# --- サイドバー ---
+# ---------------------------------------------------------
+# 2. サイドバー設定
+# ---------------------------------------------------------
 with st.sidebar:
-        # 既存の入力フォームなどのコード...
-        st.write("---") # 区切り線
-        st.markdown("""
-        ### 【Notice / ご案内】
-        This tool is a beta version. If you plan to use results from this tool in your publications or conference presentations, **please contact the developer (Seiji Kaneko) in advance.**
+    st.markdown("### 【Notice / ご案内】")
+    st.info("""
+    This tool is a beta version. If you plan to use results from this tool in your publications or conference presentations, **please contact the developer (Seiji Kaneko) in advance.**
 
-        本ツールは現在開発中のベータ版です。論文掲載や学会発表等に使用される際は、**事前に開発者（金子）まで必ず一報ください。**
+    本ツールは現在開発中のベータ版です。論文掲載や学会発表等に使用される際は、**事前に開発者（金子）まで必ず一報ください。**
 
-        👉 **[Contact & Feedback Form / 連絡窓口](https://forms.gle/xgNscMi3KFfWcuZ1A)**
+    👉 **[Contact & Feedback Form / 連絡窓口](https://forms.gle/xgNscMi3KFfWcuZ1A)**
 
-        We will provide guidance on validation support and proper acknowledgments/co-authorship.
-        バリデーションのサポートや、謝辞・共著の記載についてご案内させていただきます。
-        """)
-with st.sidebar:
+    We will provide guidance on validation support and proper acknowledgments/co-authorship.
+    バリデーションのサポートや、謝辞・共著の記載についてご案内させていただきます。
+    """)
+    st.divider()
+
     st.header("Analysis Recipe")
     mode = st.selectbox("解析モードを選択:", [
         "1. 単色面積率 (Area)",
@@ -72,6 +73,7 @@ with st.sidebar:
     ])
     st.divider()
 
+    # --- モード別設定 ---
     if mode == "5. 割合トレンド解析 (Ratio Analysis)":
         st.markdown("### 🔢 条件設定 (Batch)")
         trend_metric = st.radio("測定対象:", ["共局在率 (Colocalization)", "面積率 (Area)"])
@@ -119,28 +121,34 @@ with st.sidebar:
             target_b = st.selectbox("対象B:", list(COLOR_MAP.keys()), index=3)
             sens_common = st.slider("色感度", 5, 50, 20)
             bright_common = st.slider("輝度", 0, 255, 60)
-　　st.divider()
+
+    # --- ★追加機能：スケール設定 ---
+    st.divider()
     with st.expander("📏 スケール設定 (Calibration)", expanded=True):
         st.caption("1ピクセルあたりの実寸を入力すると、面積(mm²)や密度(cells/mm²)を自動算出します。")
         scale_val = st.number_input("1pxの長さ (μm/px)", value=0.0, step=0.1, format="%.4f", help="0の場合、ピクセル単位のみで計算します")
-        
+
     if st.button("履歴を全消去"):
         st.session_state.analysis_history = []
         st.rerun()
-        # --- サイドバーの最後の方に追加 ---
-    with st.sidebar:
-        st.divider()
-        st.caption("【免責事項 / Disclaimer】")
-        st.caption("""
-        本ツールは画像解析の補助を目的としています。
-        照明条件や設定により結果が変動するため、最終的な解釈および結論については、
-        利用者が専門的知見に基づいて判断してください。
-    
-        This tool is for assistive purposes. Final interpretations should be 
-        made by the user based on professional expertise.
-        """)
 
-# --- メインエリア ---
+    st.divider()
+    st.caption("【免責事項 / Disclaimer】")
+    st.caption("""
+    本ツールは画像解析の補助を目的としています。
+    照明条件や設定により結果が変動するため、最終的な解釈および結論については、
+    利用者が専門的知見に基づいて判断してください。
+ 
+    This tool is for assistive purposes. Final interpretations should be 
+    made by the user based on professional expertise.
+    """)
+
+# ---------------------------------------------------------
+# 3. メインエリア
+# ---------------------------------------------------------
+st.title("🔬 Bio-Image Quantifier: Pro Edition (Extraction)")
+st.caption("2025年最終版：解析・データ抽出専用（スケール換算対応）")
+
 uploaded_files = st.file_uploader("画像をまとめてアップロード", type=["jpg", "png", "tif"], accept_multiple_files=True)
 
 if uploaded_files:
@@ -158,19 +166,29 @@ if uploaded_files:
             
             val, unit = 0.0, ""
             res_display = img_rgb.copy()
-
+            
+            # --- ★追加ロジック: 視野面積の計算 ---
             fov_area_mm2 = 0.0
             if scale_val > 0:
                 h, w = img_rgb.shape[:2]
                 # (縦px * 横px) * (μm/px / 1000)^2 = mm2
                 fov_area_mm2 = (h * w) * ((scale_val / 1000) ** 2)
-            
+
             # --- 解析ロジック ---
+            # 1. 面積率 (Area)
             if mode == "1. 単色面積率 (Area)" or (mode.startswith("5.") and trend_metric == "面積率 (Area)"):
                 mask = get_mask(img_hsv, target_a, sens_a, bright_a)
                 val = (cv2.countNonZero(mask) / (img_rgb.shape[0] * img_rgb.shape[1])) * 100
                 unit = f"% Area"
                 res_display = mask
+                
+                # 実面積計算
+                real_area_str = ""
+                if fov_area_mm2 > 0:
+                    real_area = fov_area_mm2 * (val / 100)
+                    real_area_str = f"{real_area:.4f} mm²"
+
+            # 2. カウント (Count)
             elif mode == "2. 細胞核カウント (Count)":
                 gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
                 _, th = cv2.threshold(gray, bright_count, 255, cv2.THRESH_BINARY)
@@ -181,6 +199,14 @@ if uploaded_files:
                 valid = [c for c in cnts if cv2.contourArea(c) > min_size]
                 val, unit = len(valid), "cells"
                 cv2.drawContours(res_display, valid, -1, (0,255,0), 2)
+                
+                # 密度計算
+                density_str = ""
+                if fov_area_mm2 > 0:
+                    density = val / fov_area_mm2
+                    density_str = f"{int(density):,} cells/mm²"
+
+            # 3. 共局在 (Coloc)
             elif mode == "3. 汎用共局在解析 (Colocalization)" or (mode.startswith("5.") and trend_metric == "共局在率 (Colocalization)"):
                 mask_a = get_mask(img_hsv, target_a, sens_a, bright_a)
                 mask_b = get_mask(img_hsv, target_b, sens_b, bright_b)
@@ -189,6 +215,8 @@ if uploaded_files:
                 val = (cv2.countNonZero(coloc) / denom * 100) if denom > 0 else 0
                 unit = f"% Coloc"
                 res_display = cv2.merge([mask_b, mask_a, np.zeros_like(mask_a)])
+            
+            # 4. 距離 (Distance)
             elif mode == "4. 汎用空間距離解析 (Spatial Distance)":
                 mask_a = get_mask(img_hsv, target_a, sens_common, bright_common)
                 mask_b = get_mask(img_hsv, target_b, sens_common, bright_common)
@@ -211,9 +239,16 @@ if uploaded_files:
             }
             batch_results.append(entry)
             
-            # --- Expanderのタイトルを固定 ---
+            # --- 結果表示 ---
             with st.expander(f"📷 Image {i+1}: {file.name}", expanded=True):
                 st.markdown(f"### Result: **{val:.2f} {unit}**")
+                
+                # ★実寸データの表示
+                if mode == "1. 単色面積率 (Area)" and scale_val > 0:
+                    st.metric("実組織面積", real_area_str)
+                elif mode == "2. 細胞核カウント (Count)" and scale_val > 0:
+                    st.metric("細胞密度", density_str)
+
                 c1, c2 = st.columns(2)
                 c1.image(img_rgb, caption="Original", use_container_width=True)
                 c2.image(res_display, caption="Analyzed", use_container_width=True)
@@ -222,7 +257,9 @@ if uploaded_files:
         st.session_state.analysis_history.extend(batch_results)
         st.rerun()
 
-# --- レポート表示セクション (データのみ) ---
+# ---------------------------------------------------------
+# 4. データエクスポート
+# ---------------------------------------------------------
 if st.session_state.analysis_history:
     st.divider()
     st.header("💾 Data Export")
