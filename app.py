@@ -40,13 +40,20 @@ def get_mask(hsv_img, color_name, sens, bright_min):
 
 def get_tissue_mask(hsv_img, color_name, sens, bright_min):
     """【組織面積計算用】穴埋め処理付きマスク"""
+    # 1. 基本的な色抽出
     mask = get_mask(hsv_img, color_name, sens, bright_min)
+    
+    # 2. モルフォロジー演算（クロージング）で隙間を埋める
     kernel = np.ones((15, 15), np.uint8) 
     mask_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    
+    # 3. さらに輪郭内部を塗りつぶす（Fill Holes）
     cnts, _ = cv2.findContours(mask_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     mask_filled = np.zeros_like(mask)
+    # ある程度大きい塊だけを組織とみなす（微小ノイズ除去）
     valid_tissue = [c for c in cnts if cv2.contourArea(c) > 500]
     cv2.drawContours(mask_filled, valid_tissue, -1, 255, thickness=cv2.FILLED)
+    
     return mask_filled
 
 def get_centroids(mask):
@@ -120,11 +127,11 @@ with st.sidebar:
             min_size = st.slider("最小サイズ(px)", 10, 500, 50)
             bright_count = st.slider("細胞輝度しきい値", 0, 255, 50)
             
-            # --- ★組織エリア正規化設定 (文言修正版) ---
+            # --- ★組織エリア正規化設定 ---
             st.divider()
             use_roi_norm = st.checkbox("組織エリア(CK8など)で密度を計算する", value=True)
             if use_roi_norm:
-                # 【修正箇所】ご指定の警告文に変更
+                # 【重要】警告文の追加
                 st.markdown("""
                 :red[**実際の染色に用いた色をお選びください。その他の色で解析しようとするとノイズが影響を及ぼし、正確な細胞核カウントが行えません。**]
                 """)
@@ -153,6 +160,7 @@ with st.sidebar:
     st.divider()
     with st.expander("📏 スケール設定 (Calibration)", expanded=True):
         st.caption("1ピクセルあたりの実寸を入力すると、面積(mm²)や密度(cells/mm²)を自動算出します。")
+        # ★初期値: 1.5267
         scale_val = st.number_input("1pxの長さ (μm/px)", value=1.5267, step=0.1, format="%.4f", help="0の場合、ピクセル単位のみで計算します")
 
     if st.button("履歴を全消去"):
@@ -174,7 +182,7 @@ with st.sidebar:
 # 3. メインエリア
 # ---------------------------------------------------------
 st.title("🔬 Bio-Image Quantifier: Pro Edition")
-st.caption("2025年最終版：解析・データ抽出専用")
+st.caption("2025年最終版：解析・データ抽出専用 (Scale: 1.5267 μm/px)")
 
 uploaded_files = st.file_uploader("画像をまとめてアップロード", type=["jpg", "png", "tif"], accept_multiple_files=True)
 
@@ -232,6 +240,7 @@ if uploaded_files:
                 density_str = ""
                 if scale_val > 0:
                     if 'use_roi_norm' in locals() and use_roi_norm:
+                        # 組織マスク生成 (穴埋め版)
                         mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
                         roi_pixel_count = cv2.countNonZero(mask_roi)
                         real_roi_area_mm2 = roi_pixel_count * ((scale_val / 1000) ** 2)
@@ -239,10 +248,12 @@ if uploaded_files:
                         if real_roi_area_mm2 > 0:
                             density = val / real_roi_area_mm2
                             density_str = f"{int(density):,} cells/mm² (ROI)"
+                            
+                            # 分母エリアを赤枠で描画
                             roi_cnts, _ = cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                             cv2.drawContours(res_display, roi_cnts, -1, (255,0,0), 3) 
                         else:
-                            density_str = "ROI Area is 0 (Check Settings)"
+                            density_str = "ROI Area is 0"
 
                     elif fov_area_mm2 > 0:
                         density = val / fov_area_mm2
@@ -258,15 +269,27 @@ if uploaded_files:
                 unit = f"% Coloc"
                 res_display = cv2.merge([mask_b, mask_a, np.zeros_like(mask_a)])
             
-            # 4. 距離 (Distance)
+            # 4. 距離 (Distance) - 【修正】μm換算対応
             elif mode == "4. 汎用空間距離解析 (Spatial Distance)":
                 mask_a = get_mask(img_hsv, target_a, sens_common, bright_common)
                 mask_b = get_mask(img_hsv, target_b, sens_common, bright_common)
                 pts_a, pts_b = get_centroids(mask_a), get_centroids(mask_b)
+                
                 if pts_a and pts_b:
-                    val = np.mean([np.min([np.linalg.norm(pa - pb) for pb in pts_b]) for pa in pts_a])
-                else: val = 0
-                unit = "px Dist"
+                    # ピクセル距離算出
+                    val_px = np.mean([np.min([np.linalg.norm(pa - pb) for pb in pts_b]) for pa in pts_a])
+                    
+                    # スケール換算
+                    if scale_val > 0:
+                        val = val_px * scale_val
+                        unit = "μm Dist"
+                    else:
+                        val = val_px
+                        unit = "px Dist"
+                else: 
+                    val = 0
+                    unit = "Dist"
+                
                 res_display = cv2.addWeighted(img_rgb, 0.6, cv2.merge([mask_a, mask_b, np.zeros_like(mask_a)]), 0.4, 0)
             
             val = max(0.0, val)
