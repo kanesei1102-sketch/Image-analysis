@@ -103,9 +103,19 @@ with st.sidebar:
             target_a = st.selectbox("解析色:", list(COLOR_MAP.keys()))
             sens_a = st.slider("感度", 5, 50, 20)
             bright_a = st.slider("輝度", 0, 255, 60)
+        
         elif mode == "2. 細胞核カウント (Count)":
             min_size = st.slider("最小サイズ(px)", 10, 500, 50)
             bright_count = st.slider("輝度しきい値", 0, 255, 50)
+            
+            # --- ★追加機能: 組織エリア正規化 ---
+            st.divider()
+            use_roi_norm = st.checkbox("組織エリア(CK8など)で密度を計算する", value=False)
+            if use_roi_norm:
+                roi_color = st.selectbox("組織の色 (分母):", list(COLOR_MAP.keys()), index=2) # 赤(RFP)をデフォルトに
+                sens_roi = st.slider("組織感度", 5, 50, 20, key="roi_sens")
+                bright_roi = st.slider("組織輝度", 0, 255, 60, key="roi_bright")
+
         elif mode == "3. 汎用共局在解析 (Colocalization)":
             c1, c2 = st.columns(2)
             with c1:
@@ -122,7 +132,7 @@ with st.sidebar:
             sens_common = st.slider("色感度", 5, 50, 20)
             bright_common = st.slider("輝度", 0, 255, 60)
 
-    # --- ★追加機能：スケール設定 ---
+    # --- スケール設定 ---
     st.divider()
     with st.expander("📏 スケール設定 (Calibration)", expanded=True):
         st.caption("1ピクセルあたりの実寸を入力すると、面積(mm²)や密度(cells/mm²)を自動算出します。")
@@ -147,7 +157,7 @@ with st.sidebar:
 # 3. メインエリア
 # ---------------------------------------------------------
 st.title("🔬 Bio-Image Quantifier: Pro Edition (Extraction)")
-st.caption("2025年最終版：解析・データ抽出専用（スケール換算対応）")
+st.caption("2025年最終版：解析・データ抽出専用（スケール換算・ROI密度計算対応）")
 
 uploaded_files = st.file_uploader("画像をまとめてアップロード", type=["jpg", "png", "tif"], accept_multiple_files=True)
 
@@ -167,7 +177,7 @@ if uploaded_files:
             val, unit = 0.0, ""
             res_display = img_rgb.copy()
             
-            # --- ★追加ロジック: 視野面積の計算 ---
+            # --- 視野面積の計算 ---
             fov_area_mm2 = 0.0
             if scale_val > 0:
                 h, w = img_rgb.shape[:2]
@@ -200,11 +210,26 @@ if uploaded_files:
                 val, unit = len(valid), "cells"
                 cv2.drawContours(res_display, valid, -1, (0,255,0), 2)
                 
-                # 密度計算
+                # --- ★追加ロジック: 密度計算 (ROI or FOV) ---
                 density_str = ""
-                if fov_area_mm2 > 0:
-                    density = val / fov_area_mm2
-                    density_str = f"{int(density):,} cells/mm²"
+                if scale_val > 0:
+                    # A. 組織エリア指定がある場合
+                    if 'use_roi_norm' in locals() and use_roi_norm:
+                        mask_roi = get_mask(img_hsv, roi_color, sens_roi, bright_roi)
+                        roi_pixel_count = cv2.countNonZero(mask_roi)
+                        real_roi_area_mm2 = roi_pixel_count * ((scale_val / 1000) ** 2)
+                        
+                        if real_roi_area_mm2 > 0:
+                            density = val / real_roi_area_mm2
+                            density_str = f"{int(density):,} cells/mm² (ROI)"
+                            # 組織エリアを赤枠で表示
+                            contours_roi, _ = cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                            cv2.drawContours(res_display, contours_roi, -1, (0,0,255), 1)
+
+                    # B. 指定がない場合 (全体面積)
+                    elif fov_area_mm2 > 0:
+                        density = val / fov_area_mm2
+                        density_str = f"{int(density):,} cells/mm² (FOV)"
 
             # 3. 共局在 (Coloc)
             elif mode == "3. 汎用共局在解析 (Colocalization)" or (mode.startswith("5.") and trend_metric == "共局在率 (Colocalization)"):
@@ -243,7 +268,7 @@ if uploaded_files:
             with st.expander(f"📷 Image {i+1}: {file.name}", expanded=True):
                 st.markdown(f"### Result: **{val:.2f} {unit}**")
                 
-                # ★実寸データの表示
+                # 実寸データの表示
                 if mode == "1. 単色面積率 (Area)" and scale_val > 0:
                     st.metric("実組織面積", real_area_str)
                 elif mode == "2. 細胞核カウント (Count)" and scale_val > 0:
