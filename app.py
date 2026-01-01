@@ -7,7 +7,7 @@ import datetime  # JST日時取得用
 # ---------------------------------------------------------
 # 0. ページ設定
 # ---------------------------------------------------------
-st.set_page_config(page_title="Bio-Image Quantifier Pro (Extraction Only)", layout="wide")
+st.set_page_config(page_title="Bio-Image Quantifier Pro (Stable Area)", layout="wide")
 
 if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
@@ -24,6 +24,7 @@ COLOR_MAP = {
 }
 
 def get_mask(hsv_img, color_name, sens, bright_min):
+    """通常の抽出用マスク（細胞カウント用）"""
     if color_name == "赤 (RFP)":
         lower1 = np.array([0, 30, bright_min])
         upper1 = np.array([10 + sens//2, 255, 255])
@@ -36,6 +37,23 @@ def get_mask(hsv_img, color_name, sens, bright_min):
         u = np.clip(conf["upper"] + sens, 0, 255)
         l[2] = max(l[2], bright_min)
         return cv2.inRange(hsv_img, l, u)
+
+def get_tissue_mask(hsv_img, color_name, sens, bright_min):
+    """【新規】組織面積計算用のマスク（穴埋め処理付き）"""
+    # 1. 基本的な色抽出
+    mask = get_mask(hsv_img, color_name, sens, bright_min)
+    
+    # 2. モルフォロジー演算（クロージング）で隙間を埋める
+    kernel = np.ones((15, 15), np.uint8) 
+    mask_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    
+    # 3. さらに輪郭内部を塗りつぶす（Fill Holes）
+    cnts, _ = cv2.findContours(mask_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    mask_filled = np.zeros_like(mask)
+    valid_tissue = [c for c in cnts if cv2.contourArea(c) > 500]
+    cv2.drawContours(mask_filled, valid_tissue, -1, 255, thickness=cv2.FILLED)
+    
+    return mask_filled
 
 def get_centroids(mask):
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -50,6 +68,7 @@ def get_centroids(mask):
 # 2. サイドバー設定
 # ---------------------------------------------------------
 with st.sidebar:
+    # --- 復元: Notice ---
     st.markdown("### 【Notice / ご案内】")
     st.info("""
     This tool is a beta version. If you plan to use results from this tool in your publications or conference presentations, **please contact the developer (Seiji Kaneko) in advance.**
@@ -108,13 +127,15 @@ with st.sidebar:
             min_size = st.slider("最小サイズ(px)", 10, 500, 50)
             bright_count = st.slider("細胞輝度しきい値", 0, 255, 50)
             
-            # --- ★追加機能: 組織エリア正規化 ---
+            # --- ★組織エリア正規化設定 ---
             st.divider()
-            use_roi_norm = st.checkbox("組織エリア(CK8など)で密度を計算する", value=False)
+            use_roi_norm = st.checkbox("組織エリア(CK8など)で密度を計算する", value=True)
             if use_roi_norm:
-                roi_color = st.selectbox("組織の色 (分母):", list(COLOR_MAP.keys()), index=2) # 赤(RFP)をデフォルトに
+                st.info("💡 ヒント: 細胞の色ではなく、**背景の組織の色**を選択してください")
+                # デフォルトを赤(RFP)に変更
+                roi_color = st.selectbox("組織の色 (分母):", list(COLOR_MAP.keys()), index=2) 
                 sens_roi = st.slider("組織感度", 5, 50, 20, key="roi_sens")
-                bright_roi = st.slider("組織輝度", 0, 255, 60, key="roi_bright")
+                bright_roi = st.slider("組織輝度", 0, 255, 40, key="roi_bright")
 
         elif mode == "3. 汎用共局在解析 (Colocalization)":
             c1, c2 = st.columns(2)
@@ -136,13 +157,15 @@ with st.sidebar:
     st.divider()
     with st.expander("📏 スケール設定 (Calibration)", expanded=True):
         st.caption("1ピクセルあたりの実寸を入力すると、面積(mm²)や密度(cells/mm²)を自動算出します。")
-        scale_val = st.number_input("1pxの長さ (μm/px)", value=0.0, step=0.1, format="%.4f", help="0の場合、ピクセル単位のみで計算します")
+        # ★ここで初期値を 1.5267 に設定
+        scale_val = st.number_input("1pxの長さ (μm/px)", value=1.5267, step=0.1, format="%.4f", help="0の場合、ピクセル単位のみで計算します")
 
     if st.button("履歴を全消去"):
         st.session_state.analysis_history = []
         st.rerun()
 
     st.divider()
+    # --- 復元: 免責事項 ---
     st.caption("【免責事項 / Disclaimer】")
     st.caption("""
     本ツールは画像解析の補助を目的としています。
@@ -156,7 +179,7 @@ with st.sidebar:
 # ---------------------------------------------------------
 # 3. メインエリア
 # ---------------------------------------------------------
-st.title("🔬 Bio-Image Quantifier: Pro Edition (Extraction)")
+st.title("🔬 Bio-Image Quantifier: Pro Edition (Stable)")
 st.caption("2025年最終版：解析・データ抽出専用（スケール換算・ROI密度計算対応）")
 
 uploaded_files = st.file_uploader("画像をまとめてアップロード", type=["jpg", "png", "tif"], accept_multiple_files=True)
@@ -181,7 +204,6 @@ if uploaded_files:
             fov_area_mm2 = 0.0
             if scale_val > 0:
                 h, w = img_rgb.shape[:2]
-                # (縦px * 横px) * (μm/px / 1000)^2 = mm2
                 fov_area_mm2 = (h * w) * ((scale_val / 1000) ** 2)
 
             # --- 解析ロジック ---
@@ -190,18 +212,16 @@ if uploaded_files:
                 mask = get_mask(img_hsv, target_a, sens_a, bright_a)
                 val = (cv2.countNonZero(mask) / (img_rgb.shape[0] * img_rgb.shape[1])) * 100
                 unit = f"% Area"
-                res_display = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB) # 表示用にRGB化
-                # 緑色に着色して表示
+                res_display = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB)
                 res_display[:, :, 0] = 0
                 res_display[:, :, 2] = 0
                 
-                # 実面積計算
                 real_area_str = ""
                 if fov_area_mm2 > 0:
                     real_area = fov_area_mm2 * (val / 100)
                     real_area_str = f"{real_area:.4f} mm²"
 
-            # 2. カウント (Count) - 【修正箇所】
+            # 2. カウント (Count)
             elif mode == "2. 細胞核カウント (Count)":
                 gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
                 _, th = cv2.threshold(gray, bright_count, 255, cv2.THRESH_BINARY)
@@ -212,32 +232,27 @@ if uploaded_files:
                 valid = [c for c in cnts if cv2.contourArea(c) > min_size]
                 val, unit = len(valid), "cells"
                 
-                # 画像描画: 細胞を緑で囲む
+                # 細胞描画 (緑)
                 cv2.drawContours(res_display, valid, -1, (0,255,0), 2)
                 
-                # --- ★修正: 密度計算とROI可視化 ---
                 density_str = ""
                 if scale_val > 0:
-                    # A. 組織エリア指定がある場合
                     if 'use_roi_norm' in locals() and use_roi_norm:
-                        # 組織マスクを作成
-                        mask_roi = get_mask(img_hsv, roi_color, sens_roi, bright_roi)
+                        # 【重要】組織マスク生成 (穴埋め版を使用)
+                        mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
                         roi_pixel_count = cv2.countNonZero(mask_roi)
-                        
-                        # 面積計算 (mm2)
                         real_roi_area_mm2 = roi_pixel_count * ((scale_val / 1000) ** 2)
                         
                         if real_roi_area_mm2 > 0:
                             density = val / real_roi_area_mm2
                             density_str = f"{int(density):,} cells/mm² (ROI)"
                             
-                            # 【重要】分母となる組織エリアを「赤色」の太枠で描画する
-                            contours_roi, _ = cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                            cv2.drawContours(res_display, contours_roi, -1, (255,0,0), 3) 
+                            # 分母エリアを赤枠で描画（確認用）
+                            roi_cnts, _ = cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                            cv2.drawContours(res_display, roi_cnts, -1, (255,0,0), 3) 
                         else:
-                            density_str = "ROI Area is 0"
+                            density_str = "ROI Area is 0 (Check Settings)"
 
-                    # B. 指定がない場合 (全体面積)
                     elif fov_area_mm2 > 0:
                         density = val / fov_area_mm2
                         density_str = f"{int(density):,} cells/mm² (FOV)"
@@ -263,7 +278,6 @@ if uploaded_files:
                 unit = "px Dist"
                 res_display = cv2.addWeighted(img_rgb, 0.6, cv2.merge([mask_a, mask_b, np.zeros_like(mask_a)]), 0.4, 0)
             
-            # --- 0未満防止 ---
             val = max(0.0, val)
 
             entry = {
@@ -275,11 +289,9 @@ if uploaded_files:
             }
             batch_results.append(entry)
             
-            # --- 結果表示 ---
             with st.expander(f"📷 Image {i+1}: {file.name}", expanded=True):
                 st.markdown(f"### Result: **{val:.2f} {unit}**")
                 
-                # 実寸データの表示
                 if mode == "1. 単色面積率 (Area)" and scale_val > 0:
                     st.metric("実組織面積", real_area_str)
                 elif mode == "2. 細胞核カウント (Count)" and scale_val > 0:
@@ -287,7 +299,7 @@ if uploaded_files:
 
                 c1, c2 = st.columns(2)
                 c1.image(img_rgb, caption="Original", use_container_width=True)
-                c2.image(res_display, caption="Analyzed", use_container_width=True)
+                c2.image(res_display, caption="Analyzed (Green: Cells, Red: Tissue Area)", use_container_width=True)
 
     if st.button(f"データ {len(batch_results)} 件を追加", type="primary"):
         st.session_state.analysis_history.extend(batch_results)
@@ -299,13 +311,9 @@ if uploaded_files:
 if st.session_state.analysis_history:
     st.divider()
     st.header("💾 Data Export")
-    
     df = pd.DataFrame(st.session_state.analysis_history)
     df["Value"] = df["Value"].clip(lower=0) 
-
-    # 日本時間(JST)のファイル名を生成
     now = datetime.datetime.now() + datetime.timedelta(hours=9)
     file_name = f"quantified_data_{now.strftime('%Y%m%d_%H%M%S')}.csv"
-
     st.dataframe(df, use_container_width=True)
     st.download_button("📥 CSVデータを保存", df.to_csv(index=False).encode('utf-8'), file_name, "text/csv")
