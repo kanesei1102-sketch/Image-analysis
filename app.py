@@ -62,7 +62,7 @@ def get_centroids(mask):
 # 2. メインレイアウト設計
 # ---------------------------------------------------------
 st.title("🔬 Bio-Image Quantifier: Pro Edition")
-st.caption("2025年最終版：解析・データ抽出専用 (Scale: 1.5267 μm/px)")
+st.caption("2026年最新版：解析・データ抽出専用 (Scale: 1.5267 μm/px)")
 
 tab_main, tab_val = st.tabs(["🚀 解析実行 (Image Analysis)", "🏆 性能証明 (Validation Report)"])
 
