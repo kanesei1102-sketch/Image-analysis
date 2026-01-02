@@ -194,7 +194,7 @@ if uploaded_files:
         file_bytes = np.asarray(bytearray(file.read()), dtype=np.uint8)
         
         # =========================================================
-        # ★【修正】16-bit対応＆オートスケーリング機能追加
+        # ★【16-bit対応＆オートスケーリング】
         # =========================================================
         # 1. まずは「そのまま(UNCHANGED)」読み込む
         img_raw = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
@@ -314,7 +314,11 @@ if uploaded_files:
             
             val = max(0.0, val)
 
+            # =========================================================
+            # ★【修正】ファイル名(Image_Name)をCSVに追加
+            # =========================================================
             entry = {
+                "Image_Name": file.name,   # <--- ここでファイル名を保存
                 "Group": sample_group,
                 "Value": val,
                 "Unit": unit,
@@ -346,6 +350,14 @@ if st.session_state.analysis_history:
     st.divider()
     st.header("💾 Data Export")
     df = pd.DataFrame(st.session_state.analysis_history)
+    
+    # データをCSV保存しやすく整形（列の並び替え）
+    # Image_Nameを一番左に持ってくる
+    cols = ["Image_Name", "Group", "Value", "Unit", "Is_Trend", "Ratio_Value"]
+    # 存在しないカラムがあるとエラーになるので、実際にあるものだけで再構成
+    cols = [c for c in cols if c in df.columns]
+    df = df[cols]
+
     df["Value"] = df["Value"].clip(lower=0) 
     now = datetime.datetime.now() + datetime.timedelta(hours=9)
     file_name = f"quantified_data_{now.strftime('%Y%m%d_%H%M%S')}.csv"
