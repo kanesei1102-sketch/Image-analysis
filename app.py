@@ -15,7 +15,6 @@ if "analysis_history" not in st.session_state:
 # ---------------------------------------------------------
 # 1. 関数定義
 # ---------------------------------------------------------
-# 色定義
 COLOR_MAP = {
     "茶色 (DAB)": {"lower": np.array([10, 50, 20]), "upper": np.array([30, 255, 255])},
     "緑 (GFP)": {"lower": np.array([35, 50, 50]), "upper": np.array([85, 255, 255])},
@@ -193,9 +192,30 @@ if uploaded_files:
     for i, file in enumerate(uploaded_files):
         file.seek(0)
         file_bytes = np.asarray(bytearray(file.read()), dtype=np.uint8)
-        img_bgr = cv2.imdecode(file_bytes, 1)
         
-        if img_bgr is not None:
+        # =========================================================
+        # ★【修正】16-bit対応＆オートスケーリング機能追加
+        # =========================================================
+        # 1. まずは「そのまま(UNCHANGED)」読み込む
+        img_raw = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
+        
+        if img_raw is not None:
+            # 2. 16-bit (uint16) または 8-bit超の輝度がある場合
+            if img_raw.dtype == np.uint16 or img_raw.max() > 255:
+                # オートスケーリング: 上位2%を飽和させて0-255に正規化
+                p_min, p_max = np.percentile(img_raw, (0, 98))
+                img_8bit = np.clip((img_raw - p_min) * (255.0 / (p_max - p_min + 1e-5)), 0, 255).astype(np.uint8)
+                
+                # モノクロ16bitならRGBへ変換
+                if len(img_8bit.shape) == 2:
+                    img_bgr = cv2.cvtColor(img_8bit, cv2.COLOR_GRAY2BGR)
+                else:
+                    img_bgr = img_8bit
+            else:
+                # 通常の画像はカラー読み込み
+                img_bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+            # 以降の処理は元のコード通り
             img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
             img_hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
             
@@ -269,7 +289,7 @@ if uploaded_files:
                 unit = f"% Coloc"
                 res_display = cv2.merge([mask_b, mask_a, np.zeros_like(mask_a)])
             
-            # 4. 距離 (Distance) - 【修正】μm換算対応
+            # 4. 距離 (Distance)
             elif mode == "4. 汎用空間距離解析 (Spatial Distance)":
                 mask_a = get_mask(img_hsv, target_a, sens_common, bright_common)
                 mask_b = get_mask(img_hsv, target_b, sens_common, bright_common)
@@ -312,8 +332,8 @@ if uploaded_files:
                     st.metric("細胞密度", density_str)
 
                 c1, c2 = st.columns(2)
-                c1.image(img_rgb, caption="Original", use_container_width=True)
-                c2.image(res_display, caption="Analyzed (Green: Cells, Red: Tissue Area)", use_container_width=True)
+                c1.image(img_rgb, caption="Original (Auto-Scaled)", use_container_width=True)
+                c2.image(res_display, caption="Analyzed", use_container_width=True)
 
     if st.button(f"データ {len(batch_results)} 件を追加", type="primary"):
         st.session_state.analysis_history.extend(batch_results)
