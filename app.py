@@ -212,7 +212,7 @@ with st.sidebar:
     """)
 
 # ---------------------------------------------------------
-# 4. タブ1: 解析実行 (ロジック完全復元 + 16bit対応)
+# 4. タブ1: 解析実行 (ロジック完全復元 + 16bit Float演算対応)
 # ---------------------------------------------------------
 with tab_main:
     uploaded_files = st.file_uploader("画像をまとめてアップロード", type=["jpg", "png", "tif", "tiff"], accept_multiple_files=True)
@@ -225,20 +225,29 @@ with tab_main:
             file.seek(0)
             file_bytes = np.asarray(bytearray(file.read()), dtype=np.uint8)
             
-            # --- 16bit / 8bit 自動判定・読み込み処理 ---
+            # === [START] 16bit / 32bit Float 内部演算ロジック ===
             # cv2.IMREAD_UNCHANGED (-1) でオリジナルの深度を維持してロード
-            img_temp = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
+            img_raw = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
             
             img_bgr = None
-            if img_temp is not None:
-                # 16bit (uint16) の場合 -> 0-255 (uint8) へ正規化
-                if img_temp.dtype == np.uint16:
-                    # Min-Max Normalization: (val - min) / (max - min) * 255
-                    img_8bit = cv2.normalize(img_temp, None, 0, 255, cv2.NORM_MINMAX)
-                    img_8bit = img_8bit.astype(np.uint8)
+            if img_raw is not None:
+                # 32bit Float に変換して演算精度を確保
+                img_float = img_raw.astype(np.float32)
+
+                # Min-Max Normalization (32bit精度で計算)
+                # (x - min) / (max - min) * 255.0
+                min_val = np.min(img_float)
+                max_val = np.max(img_float)
+                
+                if max_val > min_val:
+                    img_norm = (img_float - min_val) / (max_val - min_val) * 255.0
                 else:
-                    # 既に8bitならそのまま
-                    img_8bit = img_temp.astype(np.uint8)
+                    # 真っ黒または単色の場合
+                    img_norm = np.clip(img_float, 0, 255)
+
+                # 解析用フォーマット (uint8) へ変換
+                # ※ここで初めて8bitに丸めることで、スライダー等の既存機能と互換性を維持
+                img_8bit = np.clip(img_norm, 0, 255).astype(np.uint8)
                 
                 # チャンネル形式を BGR (3ch) に統一
                 if len(img_8bit.shape) == 2:  # Grayscale -> BGR
@@ -247,6 +256,7 @@ with tab_main:
                     img_bgr = cv2.cvtColor(img_8bit, cv2.COLOR_BGRA2BGR)
                 elif img_8bit.shape[2] == 3:  # BGR
                     img_bgr = img_8bit
+            # === [END] 16bit / 32bit Float 内部演算ロジック ===
             
             if img_bgr is not None:
                 img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
@@ -350,7 +360,7 @@ with tab_main:
                     st.metric("細胞密度", density_str)
 
                 c1, c2 = st.columns(2)
-                c1.image(img_rgb, caption="Original (Auto-Scaled)", use_container_width=True)
+                c1.image(img_rgb, caption="Original", use_container_width=True)
                 c2.image(res_display, caption="Analyzed", use_container_width=True)
 
         if st.button(f"データ {len(batch_results)} 件を追加", type="primary"):
