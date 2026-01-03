@@ -3,6 +3,8 @@ import cv2
 import numpy as np
 import pandas as pd
 import datetime  # JST日時取得用
+import matplotlib.pyplot as plt # これが必要です
+import seaborn as sns
 import re
 
 # ---------------------------------------------------------
