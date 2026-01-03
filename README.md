@@ -21,5 +21,5 @@ If you plan to use this tool for publications or conference presentations, pleas
 ---
 
 ## 👨‍💻 Developer / 開発者
-**Seiji Kaneko** Graduate School of [Your University Name], Japan.  
+**Seiji Kaneko** Graduate School of [Tokyo City Universiry], Japan.  
 Focusing on Regenerative Medicine, Bio-Automation, and MSAT.
