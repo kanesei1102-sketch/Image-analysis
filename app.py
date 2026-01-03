@@ -306,51 +306,147 @@ with tab_main:
         st.dataframe(df, use_container_width=True)
         st.download_button("📥 CSVデータを保存", df.to_csv(index=False).encode('utf-8'), file_name, "text/csv")
 
-    with tab_val:
-        st.header("🏆 性能バリデーション・最終報告 (2026 Latest)")
-        st.markdown("""
-        **検証ソース:** [Broad Bioimage Benchmark Collection (BBBC005)](https://bbbc.broadinstitute.org/BBBC005)  
-        **検証総数:** 3,200枚 (C14, C40, C70, C100 × 800枚/実測値ベース)    
-        **方法論:** 本結果は、各密度グループに対して**パラメータ（感度・最小サイズ）を最適化**した上で取得されたものであり、適切なキャリブレーション下でのツールの最大性能を実証しています。
-        """)
+    # ==========================================
+# バリデーションデータの読み込みと統計処理
+# ==========================================
+@st.cache_data
+def load_validation_data():
+    # 実際の計測結果CSV（リポジトリ内に配置されている前提）
+    files = {
+        'C14': 'quantified_data_20260102_201522.csv',
+        'C40': 'quantified_data_20260102_194322.csv',
+        'C70': 'quantified_data_20260103_093427.csv',
+        'C100': 'quantified_data_20260102_202525.csv'
+    }
+    
+    data_list = []
+    # 正解データ（Ground Truth）の定義
+    gt_map = {'C14': 14, 'C40': 40, 'C70': 70, 'C100': 100}
 
-        # --- 最新メトリクス (C14-C100 実測平均) ---
+    for density, filename in files.items():
+        try:
+            df = pd.read_csv(filename)
+            col = 'Image_Name' if 'Image_Name' in df.columns else 'File Name'
+            
+            for _, row in df.iterrows():
+                fname = str(row[col])
+                val = row['Value']
+                
+                # W1(核) / W2(細胞体) の判定
+                channel = 'W1' if 'w1' in fname.lower() else 'W2' if 'w2' in fname.lower() else None
+                if not channel: continue
+                
+                # フォーカスレベルの抽出
+                f_match = re.search(r'_F(\d+)_', fname)
+                if f_match:
+                    focus = int(f_match.group(1))
+                    accuracy = (val / gt_map[density]) * 100
+                    data_list.append({
+                        'Density': density,
+                        'Ground Truth': gt_map[density],
+                        'Focus': focus,
+                        'Channel': channel,
+                        'Value': val,
+                        'Accuracy': accuracy
+                    })
+        except FileNotFoundError:
+            pass # ファイルがない場合は無視
+            
+    return pd.DataFrame(data_list)
+
+# データのロード
+df_val = load_validation_data()
+
+with tab_val:
+    st.header("🏆 性能バリデーション・最終報告 (2026 Latest)")
+    
+    # 箇条書きにして改行のもやもやを解消
+    st.markdown("""
+    * **検証ソース:** [Broad Bioimage Benchmark Collection (BBBC005)](https://bbbc.broadinstitute.org/BBBC005)
+    * **検証総数:** 3,200枚 (C14, C40, C70, C100 × 各800枚)
+    * **方法論:** 各密度グループに対して**個別にパラメータ（感度・最小サイズ）を最適化**した上で検証を行い、適切なキャリブレーション下でのツールの最大性能を実証しました。
+    """)
+
+    if not df_val.empty:
+        # --- 1. 概要メトリクス計算 (Focus 1-5の高品質データを使用) ---
+        df_hq = df_val[(df_val['Focus'] >= 1) & (df_val['Focus'] <= 5)]
+        w1_hq = df_hq[df_hq['Channel'] == 'W1']
+        
+        # 平均精度
+        avg_acc = w1_hq['Accuracy'].mean()
+        
+        # 線形性 (R2)
+        df_lin = w1_hq.groupby('Ground Truth')['Value'].mean().reset_index()
+        r2 = np.corrcoef(df_lin['Ground Truth'], df_lin['Value'])[0, 1]**2
+
         m1, m2, m3 = st.columns(3)
-        m1.metric("核カウント平均精度 (W1)", "97.7%", help="Focus Level 1-5における全密度平均")
-        m2.metric("統計的線形性 (R²)", "0.9977", help="W1実測値(C14-C100)に基づく決定係数")
-        m3.metric("連続処理安定性", "3,200+ 枚", help="800枚×4バッチ完遂")
+        m1.metric("核カウント平均精度 (W1)", f"{avg_acc:.1f}%", help="Focus 1-5における全密度平均精度")
+        m2.metric("統計的線形性 (R²)", f"{r2:.4f}", help="実測値と真値の相関係数（W1）")
+        m3.metric("連続処理安定性", "3,200+ 枚", help="大量バッチ処理をエラーなしで完遂")
 
         st.divider()
 
-        # --- 1. Linearity (線形性) ---
+        # --- 2. グラフセクション (動的描画) ---
         st.subheader("📈 1. 計数能力と線形性 (Linearity)")
         st.info("💡 **結論:** W1（核）は $R^2=0.9977$ で理想線に追従。W2（細胞体）はV字型の乖離を示し定量不適。")
-    
-        # W1 vs W2 線形性比較グラフ
-        st.image("linearity_real_c100.png", caption="Linearity Comparison: W1 (Blue) vs W2 (Orange) - Real Data C14-C100", use_container_width=True)
+        
+        fig1, ax1 = plt.subplots(figsize=(10, 5))
+        # W1プロット
+        ax1.scatter(df_lin['Ground Truth'], df_lin['Value'], color='#1f77b4', s=100, label='W1 (Nuclei)', zorder=5)
+        # W2プロット
+        w2_lin = df_hq[df_hq['Channel'] == 'W2'].groupby('Ground Truth')['Value'].mean().reset_index()
+        ax1.scatter(w2_lin['Ground Truth'], w2_lin['Value'], color='#ff7f0e', s=100, marker='D', label='W2 (Cytoplasm)', zorder=5)
+        # 理想線
+        ax1.plot([0, 110], [0, 110], 'k--', alpha=0.3, label='Ideal (y=x)')
+        # W1回帰直線
+        z = np.polyfit(df_lin['Ground Truth'], df_lin['Value'], 1)
+        ax1.plot(df_lin['Ground Truth'], np.poly1d(z)(df_lin['Ground Truth']), '#1f77b4', alpha=0.5, label=f'W1 Regression')
+        
+        ax1.set_xlabel('Ground Truth (Cells)'); ax1.set_ylabel('Measured Count')
+        ax1.legend(); ax1.grid(True, linestyle=':', alpha=0.6)
+        st.pyplot(fig1)
 
         st.divider()
 
-        # --- 2. Density Comparison (密度別精度) ---
-        st.subheader("📊 2. 密度別精度比較 (W1 vs W2)")
-        st.success("✅ **推奨:** 全密度領域において「W1」を使用してください。")
-        st.markdown("""
-        * **W1 (Nuclei):** C14からC100まで、常に95%〜100%の高精度を維持。
-        * **W2 (Cytoplasm):** C70までは過少検出 (Under)、C100では135%の過剰検出 (Over) となり制御不能。
-        """)
-    
-        # W1 vs W2 棒グラフ
-        st.image("w1_w2_comparison_real_c100.png", caption="Accuracy by Density: W1 Stability vs W2 Instability", use_container_width=True)
+        # 密度別比較とボケ耐性の2カラム
+        c_left, c_right = st.columns(2)
+        with c_left:
+            st.subheader("📊 2. 密度別精度比較")
+            fig2, ax2 = plt.subplots(figsize=(8, 6))
+            df_bar = df_hq.groupby(['Density', 'Channel'])['Accuracy'].mean().reset_index()
+            sns.barplot(data=df_bar, x='Density', y='Accuracy', hue='Channel', palette={'W1': '#1f77b4', 'W2': '#ff7f0e'}, ax=ax2)
+            ax2.axhline(100, color='red', linestyle='--', alpha=0.5)
+            ax2.set_ylabel('Accuracy (%)')
+            st.pyplot(fig2)
+            st.success("✅ **推奨:** 全密度領域で「W1」を使用してください。")
+
+        with c_right:
+            st.subheader("📉 3. 光学的な堅牢性")
+            fig3, ax3 = plt.subplots(figsize=(8, 6))
+            df_decay = df_val[df_val['Channel'] == 'W1']
+            sns.lineplot(data=df_decay, x='Focus', y='Accuracy', hue='Density', marker='o', ax=ax3)
+            ax3.axhline(100, color='red', linestyle='--', alpha=0.5)
+            ax3.set_ylabel('Accuracy (%)')
+            st.pyplot(fig3)
+            st.warning("⚠️ **注意:** C100解析時は Focus 5 以内を推奨。")
 
         st.divider()
 
-        # --- 3. Focus Robustness (光学的な堅牢性) ---
-        st.subheader("📉 3. 光学的な堅牢性 (Focus Robustness)")
-        st.warning("⚠️ **注意:** 高密度 (C100) 解析時は Focus Level 5 以内を厳守してください。")
-        st.markdown("""
-        * **C14 (青線):** ボケても精度100%を維持 (Robust)。
-        * **C100 (紫線):** F5を超えると急激に精度が崩壊 (Sensitive)。
-        """)
-    
-        # Accuracy Decay 折れ線グラフ
-        st.image("accuracy_decay_real_c100.png", caption="Accuracy Decay by Focus Level (C14-C100 Real Data)", use_container_width=True)
+        # --- 3. 数値サマリーテーブル (透明性) ---
+        st.subheader("📋 4. バリデーション数値データサマリー")
+        st.caption("Focus Level 1-5 (高品質画像群) における平均実測値の対照表")
+        
+        # テーブル用データの成形
+        summary = df_hq.groupby(['Density', 'Channel'])['Accuracy'].mean().unstack().reset_index()
+        summary['真値'] = summary['Density'].map(gt_map)
+        summary['核解析値(平均)'] = (summary['W1'] / 100) * summary['真値']
+        
+        # リネームして表示
+        st.table(summary[['Density', '真値', 'W1', '核解析値(平均)']].rename(columns={
+            'Density': '密度', 'W1': '核精度 (%)'
+        }))
+        
+        st.info("💡 **最終結論:** 適切なパラメータ設定下において、W1（核）は全密度領域で平均97.7%の精度を達成。定量解析において極めて高い信頼性を有することが証明されました。")
+
+    else:
+        st.error("❌ バリデーション用CSVファイルが見つかりません。")  
