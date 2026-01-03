@@ -212,10 +212,10 @@ with st.sidebar:
     """)
 
 # ---------------------------------------------------------
-# 4. タブ1: 解析実行 (ロジック完全復元)
+# 4. タブ1: 解析実行 (ロジック完全復元 + 16bit対応)
 # ---------------------------------------------------------
 with tab_main:
-    uploaded_files = st.file_uploader("画像をまとめてアップロード", type=["jpg", "png", "tif"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("画像をまとめてアップロード", type=["jpg", "png", "tif", "tiff"], accept_multiple_files=True)
 
     if uploaded_files:
         st.success(f"{len(uploaded_files)} 枚の画像を解析中...")
@@ -224,7 +224,29 @@ with tab_main:
         for i, file in enumerate(uploaded_files):
             file.seek(0)
             file_bytes = np.asarray(bytearray(file.read()), dtype=np.uint8)
-            img_bgr = cv2.imdecode(file_bytes, 1)
+            
+            # --- 16bit / 8bit 自動判定・読み込み処理 ---
+            # cv2.IMREAD_UNCHANGED (-1) でオリジナルの深度を維持してロード
+            img_temp = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
+            
+            img_bgr = None
+            if img_temp is not None:
+                # 16bit (uint16) の場合 -> 0-255 (uint8) へ正規化
+                if img_temp.dtype == np.uint16:
+                    # Min-Max Normalization: (val - min) / (max - min) * 255
+                    img_8bit = cv2.normalize(img_temp, None, 0, 255, cv2.NORM_MINMAX)
+                    img_8bit = img_8bit.astype(np.uint8)
+                else:
+                    # 既に8bitならそのまま
+                    img_8bit = img_temp.astype(np.uint8)
+                
+                # チャンネル形式を BGR (3ch) に統一
+                if len(img_8bit.shape) == 2:  # Grayscale -> BGR
+                    img_bgr = cv2.cvtColor(img_8bit, cv2.COLOR_GRAY2BGR)
+                elif img_8bit.shape[2] == 4:  # BGRA (透明度あり) -> BGR
+                    img_bgr = cv2.cvtColor(img_8bit, cv2.COLOR_BGRA2BGR)
+                elif img_8bit.shape[2] == 3:  # BGR
+                    img_bgr = img_8bit
             
             if img_bgr is not None:
                 img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
@@ -328,7 +350,7 @@ with tab_main:
                     st.metric("細胞密度", density_str)
 
                 c1, c2 = st.columns(2)
-                c1.image(img_rgb, caption="Original", use_container_width=True)
+                c1.image(img_rgb, caption="Original (Auto-Scaled)", use_container_width=True)
                 c2.image(res_display, caption="Analyzed", use_container_width=True)
 
         if st.button(f"データ {len(batch_results)} 件を追加", type="primary"):
