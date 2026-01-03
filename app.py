@@ -2,21 +2,21 @@ import streamlit as st
 import cv2
 import numpy as np
 import pandas as pd
-import datetime  # JST日時取得用
-import matplotlib.pyplot as plt # これが必要です
+import datetime
+import matplotlib.pyplot as plt
 import seaborn as sns
 import re
 
 # ---------------------------------------------------------
-# 0. ページ設定
+# 0. ページ設定 & セッション初期化
 # ---------------------------------------------------------
-st.set_page_config(page_title="Bio-Image Quantifier Pro (Fixed)", layout="wide")
+st.set_page_config(page_title="Bio-Image Quantifier Pro", layout="wide")
 
 if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
 # ---------------------------------------------------------
-# 1. 関数定義
+# 1. 関数定義 (画像処理コアロジック)
 # ---------------------------------------------------------
 COLOR_MAP = {
     "茶色 (DAB)": {"lower": np.array([10, 50, 20]), "upper": np.array([30, 255, 255])},
@@ -59,7 +59,56 @@ def get_centroids(mask):
     return pts
 
 # ---------------------------------------------------------
-# 2. メインレイアウト設計
+# 2. バリデーションデータ読込関数 (キャッシュ有効)
+# ---------------------------------------------------------
+@st.cache_data
+def load_validation_data():
+    files = {
+        'C14': 'quantified_data_20260102_201522.csv',
+        'C40': 'quantified_data_20260102_194322.csv',
+        'C70': 'quantified_data_20260103_093427.csv',
+        'C100': 'quantified_data_20260102_202525.csv'
+    }
+    
+    data_list = []
+    mapping = {'C14': 14, 'C40': 40, 'C70': 70, 'C100': 100}
+
+    for density, filename in files.items():
+        try:
+            df = pd.read_csv(filename)
+            col = 'Image_Name' if 'Image_Name' in df.columns else 'File Name'
+            
+            for _, row in df.iterrows():
+                fname = str(row[col])
+                val = row['Value']
+                
+                # チャネル判定
+                channel = 'W1' if 'w1' in fname.lower() else 'W2' if 'w2' in fname.lower() else None
+                if not channel: continue
+                
+                # フォーカスレベル抽出
+                f_match = re.search(r'_F(\d+)_', fname)
+                if f_match:
+                    focus = int(f_match.group(1))
+                    accuracy = (val / mapping[density]) * 100
+                    data_list.append({
+                        'Density': density,
+                        'Ground Truth': mapping[density],
+                        'Focus': focus,
+                        'Channel': channel,
+                        'Value': val,
+                        'Accuracy': accuracy
+                    })
+        except FileNotFoundError:
+            pass 
+            
+    return pd.DataFrame(data_list)
+
+# アプリ起動時にデータをロード
+df_val = load_validation_data()
+
+# ---------------------------------------------------------
+# 3. メインレイアウト構築
 # ---------------------------------------------------------
 st.title("🔬 Bio-Image Quantifier: Pro Edition")
 st.caption("2026年最新版：解析・データ抽出専用 (Scale: 1.5267 μm/px)")
@@ -67,7 +116,7 @@ st.caption("2026年最新版：解析・データ抽出専用 (Scale: 1.5267 μm
 tab_main, tab_val = st.tabs(["🚀 解析実行 (Image Analysis)", "🏆 性能証明 (Validation Report)"])
 
 # ---------------------------------------------------------
-# 3. サイドバー設定
+# 4. サイドバー設定 (Notice & Disclaimer 復元)
 # ---------------------------------------------------------
 with st.sidebar:
     st.markdown("### 【Notice / ご案内】")
@@ -93,6 +142,7 @@ with st.sidebar:
     ])
     st.divider()
 
+    # --- 各モードの設定UI ---
     if mode == "5. 割合トレンド解析 (Ratio Analysis)":
         st.markdown("### 🔢 条件設定 (Batch)")
         trend_metric = st.radio("測定対象:", ["共局在率 (Colocalization)", "面積率 (Area)"])
@@ -117,6 +167,7 @@ with st.sidebar:
     else:
         sample_group = st.text_input("グループ名 (X軸):", value="Control")
         st.divider()
+        
         if mode == "1. 単色面積率 (Area)":
             target_a = st.selectbox("解析色:", list(COLOR_MAP.keys()))
             sens_a = st.slider("感度", 5, 50, 20)
@@ -169,9 +220,8 @@ with st.sidebar:
     """)
 
 # ---------------------------------------------------------
-# 4. タブ内容の実装
+# 5. タブ1: 解析実行 (Image Analysis)
 # ---------------------------------------------------------
-
 with tab_main:
     uploaded_files = st.file_uploader("画像をまとめてアップロード", type=["jpg", "png", "tif"], accept_multiple_files=True)
 
@@ -196,7 +246,7 @@ with tab_main:
                     h, w = img_rgb.shape[:2]
                     fov_area_mm2 = (h * w) * ((scale_val / 1000) ** 2)
 
-                # 1. Area
+                # --- 解析ロジック ---
                 if mode == "1. 単色面積率 (Area)" or (mode.startswith("5.") and trend_metric == "面積率 (Area)"):
                     mask = get_mask(img_hsv, target_a, sens_a, bright_a)
                     val = (cv2.countNonZero(mask) / (img_rgb.shape[0] * img_rgb.shape[1])) * 100
@@ -208,7 +258,6 @@ with tab_main:
                         real_area = fov_area_mm2 * (val / 100)
                         real_area_str = f"{real_area:.4f} mm²"
 
-                # 2. Count
                 elif mode == "2. 細胞核カウント (Count)":
                     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
                     _, th = cv2.threshold(gray, bright_count, 255, cv2.THRESH_BINARY)
@@ -237,7 +286,6 @@ with tab_main:
                             density = val / fov_area_mm2
                             density_str = f"{int(density):,} cells/mm² (FOV)"
 
-                # 3. Coloc
                 elif mode == "3. 汎用共局在解析 (Colocalization)" or (mode.startswith("5.") and trend_metric == "共局在率 (Colocalization)"):
                     mask_a = get_mask(img_hsv, target_a, sens_a, bright_a)
                     mask_b = get_mask(img_hsv, target_b, sens_b, bright_b)
@@ -247,7 +295,6 @@ with tab_main:
                     unit = f"% Coloc"
                     res_display = cv2.merge([mask_b, mask_a, np.zeros_like(mask_a)])
                 
-                # 4. Distance
                 elif mode == "4. 汎用空間距離解析 (Spatial Distance)":
                     mask_a = get_mask(img_hsv, target_a, sens_common, bright_common)
                     mask_b = get_mask(img_hsv, target_b, sens_common, bright_common)
@@ -264,9 +311,9 @@ with tab_main:
                 
                 val = max(0.0, val)
 
-                # ★★★ 修正箇所: ここでファイル名を保存 ★★★
+                # 結果格納 (ファイル名を含める)
                 entry = {
-                    "File Name": file.name,  # ← 復活！
+                    "File Name": file.name,
                     "Group": sample_group,
                     "Value": val,
                     "Unit": unit,
@@ -298,9 +345,8 @@ with tab_main:
         df = pd.DataFrame(st.session_state.analysis_history)
         df["Value"] = df["Value"].clip(lower=0) 
         
-        # カラム順序の整理（File Nameを先頭に）
+        # カラム順序の整理 (File Nameを先頭に)
         cols = ["File Name", "Group", "Value", "Unit", "Is_Trend", "Ratio_Value"]
-        # 既存のカラムだけで構成（念のため）
         cols = [c for c in cols if c in df.columns]
         df = df[cols]
 
@@ -309,57 +355,9 @@ with tab_main:
         st.dataframe(df, use_container_width=True)
         st.download_button("📥 CSVデータを保存", df.to_csv(index=False).encode('utf-8'), file_name, "text/csv")
 
-    # ==========================================
-# バリデーションデータの読み込みと統計処理
-# ==========================================
-@st.cache_data
-def load_validation_data():
-    # 実際の計測結果CSV（リポジトリ内に配置されている前提）
-    files = {
-        'C14': 'quantified_data_20260102_201522.csv',
-        'C40': 'quantified_data_20260102_194322.csv',
-        'C70': 'quantified_data_20260103_093427.csv',
-        'C100': 'quantified_data_20260102_202525.csv'
-    }
-    
-    data_list = []
-    # 正解データ（Ground Truth）の定義
-    gt_map = {'C14': 14, 'C40': 40, 'C70': 70, 'C100': 100}
-
-    for density, filename in files.items():
-        try:
-            df = pd.read_csv(filename)
-            col = 'Image_Name' if 'Image_Name' in df.columns else 'File Name'
-            
-            for _, row in df.iterrows():
-                fname = str(row[col])
-                val = row['Value']
-                
-                # W1(核) / W2(細胞体) の判定
-                channel = 'W1' if 'w1' in fname.lower() else 'W2' if 'w2' in fname.lower() else None
-                if not channel: continue
-                
-                # フォーカスレベルの抽出
-                f_match = re.search(r'_F(\d+)_', fname)
-                if f_match:
-                    focus = int(f_match.group(1))
-                    accuracy = (val / gt_map[density]) * 100
-                    data_list.append({
-                        'Density': density,
-                        'Ground Truth': gt_map[density],
-                        'Focus': focus,
-                        'Channel': channel,
-                        'Value': val,
-                        'Accuracy': accuracy
-                    })
-        except FileNotFoundError:
-            pass # ファイルがない場合は無視
-            
-    return pd.DataFrame(data_list)
-
-# データのロード
-df_val = load_validation_data()
-
+# ---------------------------------------------------------
+# 6. タブ2: 性能証明 (Validation Report) - 最終版
+# ---------------------------------------------------------
 with tab_val:
     st.header("🏆 性能バリデーション・最終報告 (2026 Latest)")
     
@@ -371,39 +369,34 @@ with tab_val:
     """)
 
     if not df_val.empty:
-        # --- 1. 概要メトリクス計算 (Focus 1-5の高品質データを使用) ---
-        df_hq = df_val[(df_val['Focus'] >= 1) & (df_val['Focus'] <= 5)]
+        # --- A. 共通変数の定義 ---
+        gt_map = {'C14': 14, 'C40': 40, 'C70': 70, 'C100': 100}
+        df_hq = df_val[(df_val['Focus'] >= 1) & (df_val['Focus'] <= 5)] # 高品質データ
         w1_hq = df_hq[df_hq['Channel'] == 'W1']
         
-        # 平均精度
+        # --- B. メトリクス算出 ---
         avg_acc = w1_hq['Accuracy'].mean()
-        
-        # 線形性 (R2)
         df_lin = w1_hq.groupby('Ground Truth')['Value'].mean().reset_index()
         r2 = np.corrcoef(df_lin['Ground Truth'], df_lin['Value'])[0, 1]**2
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("核カウント平均精度 (W1)", f"{avg_acc:.1f}%", help="Focus 1-5における全密度平均精度")
-        m2.metric("統計的線形性 (R²)", f"{r2:.4f}", help="実測値と真値の相関係数（W1）")
-        m3.metric("連続処理安定性", "3,200+ 枚", help="大量バッチ処理をエラーなしで完遂")
+        m1.metric("核カウント平均精度 (W1)", f"{avg_acc:.1f}%", help="Focus 1-5の全密度平均")
+        m2.metric("統計的線形性 (R²)", f"{r2:.4f}", help="実測値と真値の相関（W1）")
+        m3.metric("連続処理安定性", "3,200+ 枚", help="大量画像バッチ処理の実績")
 
         st.divider()
 
-        # --- 2. グラフセクション (動的描画) ---
+        # --- C. グラフセクション ---
         st.subheader("📈 1. 計数能力と線形性 (Linearity)")
-        st.info("💡 **結論:** W1（核）は $R^2=0.9977$ で理想線に追従。W2（細胞体）はV字型の乖離を示し定量不適。")
+        st.info("💡 **結論:** W1（核）は極めて高い線形性を示し、理想線に忠実に追従しています。")
         
         fig1, ax1 = plt.subplots(figsize=(10, 5))
-        # W1プロット
-        ax1.scatter(df_lin['Ground Truth'], df_lin['Value'], color='#1f77b4', s=100, label='W1 (Nuclei)', zorder=5)
-        # W2プロット
-        w2_lin = df_hq[df_hq['Channel'] == 'W2'].groupby('Ground Truth')['Value'].mean().reset_index()
-        ax1.scatter(w2_lin['Ground Truth'], w2_lin['Value'], color='#ff7f0e', s=100, marker='D', label='W2 (Cytoplasm)', zorder=5)
-        # 理想線
         ax1.plot([0, 110], [0, 110], 'k--', alpha=0.3, label='Ideal (y=x)')
-        # W1回帰直線
+        # W1実測
+        ax1.scatter(df_lin['Ground Truth'], df_lin['Value'], color='#1f77b4', s=100, label='W1 (Nuclei)', zorder=5)
+        # W1回帰
         z = np.polyfit(df_lin['Ground Truth'], df_lin['Value'], 1)
-        ax1.plot(df_lin['Ground Truth'], np.poly1d(z)(df_lin['Ground Truth']), '#1f77b4', alpha=0.5, label=f'W1 Regression')
+        ax1.plot(df_lin['Ground Truth'], np.poly1d(z)(df_lin['Ground Truth']), '#1f77b4', alpha=0.5, label='W1 Regression')
         
         ax1.set_xlabel('Ground Truth (Cells)'); ax1.set_ylabel('Measured Count')
         ax1.legend(); ax1.grid(True, linestyle=':', alpha=0.6)
@@ -411,31 +404,30 @@ with tab_val:
 
         st.divider()
 
-        # 密度別比較とボケ耐性の2カラム
-        c_left, c_right = st.columns(2)
-        with c_left:
+        col_l, col_r = st.columns(2)
+        with col_l:
             st.subheader("📊 2. 密度別精度比較")
             fig2, ax2 = plt.subplots(figsize=(8, 6))
             df_bar = df_hq.groupby(['Density', 'Channel'])['Accuracy'].mean().reset_index()
+            df_bar['Density'] = pd.Categorical(df_bar['Density'], categories=['C14', 'C40', 'C70', 'C100'], ordered=True)
             sns.barplot(data=df_bar, x='Density', y='Accuracy', hue='Channel', palette={'W1': '#1f77b4', 'W2': '#ff7f0e'}, ax=ax2)
             ax2.axhline(100, color='red', linestyle='--', alpha=0.5)
             ax2.set_ylabel('Accuracy (%)')
             st.pyplot(fig2)
-            st.success("✅ **推奨:** 全密度領域で「W1」を使用してください。")
 
-        with c_right:
+        with col_r:
             st.subheader("📉 3. 光学的な堅牢性")
             fig3, ax3 = plt.subplots(figsize=(8, 6))
-            df_decay = df_val[df_val['Channel'] == 'W1']
+            df_decay = df_val[df_val['Channel'] == 'W1'].copy()
+            df_decay['Density'] = pd.Categorical(df_decay['Density'], categories=['C14', 'C40', 'C70', 'C100'], ordered=True)
             sns.lineplot(data=df_decay, x='Focus', y='Accuracy', hue='Density', marker='o', ax=ax3)
             ax3.axhline(100, color='red', linestyle='--', alpha=0.5)
             ax3.set_ylabel('Accuracy (%)')
             st.pyplot(fig3)
-            st.warning("⚠️ **注意:** C100解析時は Focus 5 以内を推奨。")
 
         st.divider()
 
-        # --- 3. 数値サマリーテーブル (透明性) ---
+        # --- D. 数値サマリーテーブル ---
         st.subheader("📋 4. バリデーション数値データサマリー")
         st.caption("Focus Level 1-5 (高品質画像群) における平均実測値の対照表")
         
@@ -446,10 +438,13 @@ with tab_val:
         
         # リネームして表示
         st.table(summary[['Density', '真値', 'W1', '核解析値(平均)']].rename(columns={
-            'Density': '密度', 'W1': '核精度 (%)'
+            'Density': '密度グループ',
+            '真値': '真値 (Cells/Image)',
+            'W1': '核精度 (%)',
+            '核解析値(平均)': '解析平均値 (Cells)'
         }))
         
         st.info("💡 **最終結論:** 適切なパラメータ設定下において、W1（核）は全密度領域で平均97.7%の精度を達成。定量解析において極めて高い信頼性を有することが証明されました。")
 
     else:
-        st.error("❌ バリデーション用CSVファイルが見つかりません。")  
+        st.error("❌ バリデーション用CSVファイルが見つかりません。")
