@@ -307,16 +307,49 @@ with tab_main:
         st.download_button("📥 CSVデータを保存", df.to_csv(index=False).encode('utf-8'), file_name, "text/csv")
 
 with tab_val:
-    st.header("🏆 性能バリデーション・最終報告")
-    st.markdown("**検証ソース:** [Broad Bioimage Benchmark Collection (BBBC005)](https://bbbc.broadinstitute.org/BBBC005)")
+    st.header("🏆 性能バリデーション・最終報告 (2026 Latest)")
+    st.markdown("""
+    **検証ソース:** [Broad Bioimage Benchmark Collection (BBBC005)](https://bbbc.broadinstitute.org/BBBC005)  
+    **検証総数:** 3,200枚 (C14, C40, C70, C100 × 800枚/実測値ベース)
+    """)
+
+    # --- 最新メトリクス (C14-C100 実測平均) ---
     m1, m2, m3 = st.columns(3)
-    m1.metric("核カウント平均精度 (W1)", "95.8%"); m2.metric("統計的線形性 (R²)", "0.9994"); m3.metric("連続処理安定性", "800+ 枚")
+    m1.metric("核カウント平均精度 (W1)", "97.7%", help="Focus Level 1-5における全密度平均")
+    m2.metric("統計的線形性 (R²)", "0.9977", help="W1実測値(C14-C100)に基づく決定係数")
+    m3.metric("連続処理安定性", "3,200+ 枚", help="800枚×4バッチ完遂")
+
     st.divider()
-    st.subheader("📈 1. 計数能力 (Linearity)")
-    st.info("細胞密度が変わっても 99.9% の相関で正確に追従。")
+
+    # --- 1. Linearity (線形性) ---
+    st.subheader("📈 1. 計数能力と線形性 (Linearity)")
+    st.info("💡 **結論:** W1（核）は $R^2=0.9977$ で理想線に追従。W2（細胞体）はV字型の乖離を示し定量不適。")
+    
+    # W1 vs W2 線形性比較グラフ
+    st.image("linearity_real_c100.png", caption="Linearity Comparison: W1 (Blue) vs W2 (Orange) - Real Data C14-C100", use_container_width=True)
+
     st.divider()
-    st.subheader("📊 2. 密度別精度比較")
-    st.success("W1（核）は全密度で90%以上を維持。")
+
+    # --- 2. Density Comparison (密度別精度) ---
+    st.subheader("📊 2. 密度別精度比較 (W1 vs W2)")
+    st.success("✅ **推奨:** 全密度領域において「W1」を使用してください。")
+    st.markdown("""
+    * **W1 (Nuclei):** C14からC100まで、常に95%〜100%の高精度を維持。
+    * **W2 (Cytoplasm):** C70までは過少検出 (Under)、C100では135%の過剰検出 (Over) となり制御不能。
+    """)
+    
+    # W1 vs W2 棒グラフ
+    st.image("w1_w2_comparison_real_c100.png", caption="Accuracy by Density: W1 Stability vs W2 Instability", use_container_width=True)
+
     st.divider()
+
+    # --- 3. Focus Robustness (光学的な堅牢性) ---
     st.subheader("📉 3. 光学的な堅牢性 (Focus Robustness)")
-    st.info("💡 **動作保証:** Focus Level 20以内")
+    st.warning("⚠️ **注意:** 高密度 (C100) 解析時は Focus Level 5 以内を厳守してください。")
+    st.markdown("""
+    * **C14 (青線):** ボケても精度100%を維持 (Robust)。
+    * **C100 (紫線):** F5を超えると急激に精度が崩壊 (Sensitive)。
+    """)
+    
+    # Accuracy Decay 折れ線グラフ
+    st.image("accuracy_decay_real_c100.png", caption="Accuracy Decay by Focus Level (C14-C100 Real Data)", use_container_width=True)
