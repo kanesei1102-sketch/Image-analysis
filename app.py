@@ -11,10 +11,10 @@ import uuid
 # ---------------------------------------------------------
 # 0. ページ設定 & 定数
 # ---------------------------------------------------------
-st.set_page_config(page_title="Bio-Image Quantifier Pro (日本語版)", layout="wide")
+st.set_page_config(page_title="Bio-Image Quantifier V2 (JP)", layout="wide")
 
-# バージョン管理 (Version Control)
-SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.01 (JP)"
+# バージョン管理
+SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.02 (JP/Auto-Group)"
 
 if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
@@ -26,7 +26,7 @@ if "current_analysis_id" not in st.session_state:
     st.session_state.current_analysis_id = f"AID-{date_str}-{unique_suffix}"
 
 # ---------------------------------------------------------
-# 1. 画像処理エンジン (16-bit Rawデータ最適化済み)
+# 1. 画像処理エンジン
 # ---------------------------------------------------------
 COLOR_MAP = {
     "茶色 (DAB)": {"lower": np.array([10, 50, 20]), "upper": np.array([30, 255, 255])},
@@ -64,7 +64,7 @@ def get_centroids(mask):
     return pts
 
 # ---------------------------------------------------------
-# 2. バリデーションデータ・パイプライン
+# 2. バリデーションデータ読み込み
 # ---------------------------------------------------------
 @st.cache_data
 def load_validation_data():
@@ -91,45 +91,59 @@ df_val = load_validation_data()
 # 3. UIフレームワーク & サイドバー
 # ---------------------------------------------------------
 st.title("🔬 Bio-Image Quantifier: Pro Edition (日本語版)")
-st.caption(f"{SOFTWARE_VERSION}: 産業グレード画像解析・データ抽出 (Scale: 1.5267 μm/px)")
+st.caption(f"{SOFTWARE_VERSION}: 産業グレード画像解析・データ抽出")
 
-st.sidebar.markdown(f"**解析ID (Audit ID):** `{st.session_state.current_analysis_id}`")
-st.sidebar.caption(f"Ver: {SOFTWARE_VERSION}")
+st.sidebar.markdown(f"**現在の解析ID:** `{st.session_state.current_analysis_id}`")
 
-tab_main, tab_val = st.tabs(["🚀 解析実行", "🏆 性能証明 (Validation)"])
+tab_main, tab_val = st.tabs(["🚀 解析実行", "🏆 性能証明"])
 
 with st.sidebar:
-    # --- 権利主張のお知らせ (Collaboration Notice) ---
     st.markdown("### 【重要：論文・学会発表での使用】")
     st.warning("""
     **研究成果として公表される予定ですか？**
-    
-    本ツールは現在ベータ版です。本ツールを用いて生成したデータを学術論文や学会発表等に使用される場合は、**必ず事前に開発者（金子）までご連絡ください。**
-    
-    研究への貢献度に応じた**共著（Co-authorship）**や、謝辞（Acknowledgment）への掲載についてご相談させていただきます。
-    
-    👉 **[連絡・お問い合わせフォーム](https://forms.gle/xgNscMi3KFfWcuZ1A)**
+    本ツールはベータ版です。学術利用の際は**必ず事前に開発者（金子）までご連絡ください。**
+    共著や謝辞についてご相談させていただきます。
+    👉 **[連絡フォーム](https://forms.gle/xgNscMi3KFfWcuZ1A)**
     """)
     st.divider()
 
-    st.header("解析レシピ (Analysis Recipe)")
-    mode = st.selectbox("解析モード選択:", [
+    st.header("解析レシピ")
+    mode_raw = st.selectbox("解析モード選択:", [
         "1. 単色面積率 (Area Occupancy %)", 
         "2. 細胞核カウント / 密度 (Nuclei Count)", 
         "3. 共局在解析 (Colocalization)", 
         "4. 空間距離解析 (Spatial Distance)", 
         "5. 割合トレンド解析 (Ratio Trend)"
     ])
+    mode = mode_raw 
+
     st.divider()
 
-    # 動的ウィジェット生成
-    if mode == "5. 割合トレンド解析 (Ratio Trend)":
-        st.markdown("### 🔢 バッチ条件設定")
+    # --- グループ化戦略 (新機能) ---
+    st.markdown("### 🏷️ グループ分け設定")
+    group_strategy = st.radio("ラベルの決定方法:", ["手動入力 (Manual)", "ファイル名から自動 (Auto)"], 
+                              help="自動: ファイル名の区切り文字より前の部分をグループ名として抽出します")
+    
+    if group_strategy.startswith("手動"):
+        sample_group = st.text_input("グループ名 (X軸ラベル):", value="Control")
+        filename_sep = None
+    else:
+        filename_sep = st.text_input("区切り文字 (例: _ または - ):", value="_", help="この文字より前をグループ名にします")
+        st.info(f"例: 'WT{filename_sep}01.tif' → グループ名: 'WT'")
+        sample_group = "(自動検出)" 
+
+    st.divider()
+
+    # 解析パラメータ設定
+    if mode.startswith("5."):
+        st.markdown("### 🔢 トレンド解析条件")
         trend_metric = st.radio("測定対象:", ["共局在率 (Colocalization)", "面積率 (Area)"])
-        ratio_val = st.number_input("条件値 (数値):", value=0, step=10)
+        ratio_val = st.number_input("条件値:", value=0, step=10)
         ratio_unit = st.text_input("単位:", value="%", key="unit")
-        sample_group = f"{ratio_val}{ratio_unit}"
-        if trend_metric == "共局在率 (Colocalization)":
+        if group_strategy.startswith("手動"):
+            sample_group = f"{ratio_val}{ratio_unit}" # トレンドモードの手動時は上書き
+        
+        if trend_metric.startswith("共局在"):
             c1, c2 = st.columns(2)
             with c1:
                 target_a = st.selectbox("CH-A (基準):", list(COLOR_MAP.keys()), index=3)
@@ -141,12 +155,11 @@ with st.sidebar:
             target_a = st.selectbox("解析色:", list(COLOR_MAP.keys()), index=2)
             sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
     else:
-        sample_group = st.text_input("グループ名 (X軸ラベル):", value="Control")
         if mode.startswith("1."):
             target_a = st.selectbox("解析色:", list(COLOR_MAP.keys())); sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
         elif mode.startswith("2."):
             min_size = st.slider("最小細胞サイズ (px)", 10, 500, 50); bright_count = st.slider("検出輝度しきい値", 0, 255, 50)
-            use_roi_norm = st.checkbox("組織領域 (ROI) で密度を正規化", value=True)
+            use_roi_norm = st.checkbox("組織領域 (ROI) で正規化", value=True)
             if use_roi_norm:
                 roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=2); sens_roi = st.slider("組織 感度", 5, 50, 20); bright_roi = st.slider("組織 輝度", 0, 255, 40)
         elif mode.startswith("3."):
@@ -162,19 +175,13 @@ with st.sidebar:
     st.divider()
     scale_val = st.number_input("空間スケール (μm/px)", value=1.5267, format="%.4f")
     
-    # 修正版：履歴をクリアするとIDも新しくなる
-    if st.button("履歴をクリア (Reset All)"):
-        # 1. データを空にする
+    # --- 履歴クリア & ID更新 ---
+    if st.button("履歴をクリア & 新規ID発行"): 
         st.session_state.analysis_history = []
-        
-        # 2. IDを新しく生成し直す (これでID重複を防げます)
         date_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d')
         st.session_state.current_analysis_id = f"AID-{date_str}-{str(uuid.uuid4())[:8]}"
-        
-        # 3. 再読み込み
         st.rerun()
 
-    # --- Parameter Export (Audit Trail) - COMPLETE ---
     st.divider()
     st.markdown("### ⚙️ 設定パラメータ保存 (監査証跡)")
     
@@ -184,12 +191,13 @@ with st.sidebar:
         "Analysis_Date_UTC": datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
         "Mode": mode,
         "Scale_um_px": scale_val,
+        "Grouping_Strategy": group_strategy
     }
-    # 全パラメータの記録 (Audit Trail)
-    if "sample_group" in locals(): current_params["Group_Label"] = sample_group
-    if "ratio_val" in locals(): current_params["Condition_Value"] = ratio_val
-    if "ratio_unit" in locals(): current_params["Condition_Unit"] = ratio_unit
-    if "trend_metric" in locals(): current_params["Trend_Metric_Target"] = trend_metric
+    if group_strategy.startswith("手動"): current_params["Manual_Group_Label"] = sample_group
+    else: current_params["Filename_Separator"] = filename_sep
+
+    # (その他のパラメータも記録)
+    if "trend_metric" in locals(): current_params["Trend_Metric"] = trend_metric
     if "target_a" in locals(): current_params["Target_A"] = target_a
     if "target_b" in locals(): current_params["Target_B"] = target_b
     if "roi_color" in locals(): current_params["ROI_Color"] = roi_color
@@ -209,28 +217,17 @@ with st.sidebar:
     df_params.columns = ["Parameter", "Setting Value"]
     param_filename = f"params_{st.session_state.current_analysis_id}.csv"
     
-    st.download_button(
-        label="📥 設定CSVを保存",
-        data=df_params.to_csv(index=False).encode('utf-8'),
-        file_name=param_filename,
-        mime="text/csv",
-        help="現在の設定値を紐付け保存します（監査証跡対応）。"
-    )
+    st.download_button("📥 設定CSVをダウンロード", df_params.to_csv(index=False).encode('utf-8'), param_filename, "text/csv")
 
-    # --- DISCLAIMER ---
     st.divider()
     st.caption("【免責事項】")
-    st.caption("""
-    本ツールは画像解析支援を目的としており、臨床診断を保証するものではありません。
-    結果は照明条件や設定値に依存します。
-    **最終的な解釈と妥当性の確認は、利用者の責任において行ってください。**
-    """)
+    st.caption("本ツールは研究用であり、臨床診断を保証しません。最終的な妥当性の確認は利用者の責任で行ってください。")
 
 # ---------------------------------------------------------
-# 4. タブ1: 解析実行 (32-bit Float高精度演算パイプライン)
+# 4. タブ1: 解析実行
 # ---------------------------------------------------------
 with tab_main:
-    uploaded_files = st.file_uploader("画像を一括アップロード (16-bit TIFF対応)", type=["jpg", "png", "tif", "tiff"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("画像アップロード (16-bit TIFF対応)", type=["jpg", "png", "tif", "tiff"], accept_multiple_files=True)
     if uploaded_files:
         st.success(f"{len(uploaded_files)} 枚の画像を解析中...")
         batch_results = []
@@ -238,6 +235,17 @@ with tab_main:
             file.seek(0); file_bytes = np.asarray(bytearray(file.read()), dtype=np.uint8)
             img_raw = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
             if img_raw is not None:
+                # --- 自動グループ化ロジック ---
+                if group_strategy.startswith("ファイル名"):
+                    try:
+                        detected_group = file.name.split(filename_sep)[0]
+                    except:
+                        detected_group = "Unknown"
+                    current_group_label = detected_group
+                else:
+                    current_group_label = sample_group
+
+                # 画像処理 (V1と同じ)
                 img_f = img_raw.astype(np.float32); mn, mx = np.min(img_f), np.max(img_f)
                 img_8 = ((img_f - mn) / (mx - mn) * 255.0 if mx > mn else np.clip(img_f, 0, 255)).astype(np.uint8)
                 img_bgr = cv2.cvtColor(img_8, cv2.COLOR_GRAY2BGR) if len(img_8.shape) == 2 else img_8[:,:,:3]
@@ -245,7 +253,7 @@ with tab_main:
                 val, unit, res_disp = 0.0, "", img_rgb.copy()
                 h, w = img_rgb.shape[:2]; fov_mm2 = (h * w) * ((scale_val / 1000) ** 2)
 
-                if mode.startswith("1.") or (mode.startswith("5.") and trend_metric == "面積率 (Area)"):
+                if mode.startswith("1.") or (mode.startswith("5.") and trend_metric.startswith("面積")):
                     mask = get_mask(img_hsv, target_a, sens_a, bright_a); val = (cv2.countNonZero(mask) / (h * w)) * 100
                     unit = "% Area"; res_disp = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB); res_disp[:,:,0]=0; res_disp[:,:,2]=0
                     real_area_str = f"{fov_mm2 * (val/100):.4f} mm²"
@@ -261,7 +269,7 @@ with tab_main:
                             mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi); a_target = cv2.countNonZero(mask_roi) * ((scale_val/1000)**2)
                             cv2.drawContours(res_disp, cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], -1, (255,0,0), 3)
                         density_str = f"{int(val/a_target):,} cells/mm²" if a_target > 0 else "N/A"
-                elif mode.startswith("3.") or (mode.startswith("5.") and trend_metric == "共局在率 (Colocalization)"):
+                elif mode.startswith("3.") or (mode.startswith("5.") and trend_metric.startswith("共局在")):
                     mask_a = get_mask(img_hsv, target_a, sens_a, bright_a); mask_b = get_mask(img_hsv, target_b, sens_b, bright_b)
                     coloc = cv2.bitwise_and(mask_a, mask_b); denom = cv2.countNonZero(mask_a)
                     val = (cv2.countNonZero(coloc) / denom * 100) if denom > 0 else 0; unit = "% Coloc"; res_disp = cv2.merge([mask_b, mask_a, np.zeros_like(mask_a)])
@@ -271,48 +279,39 @@ with tab_main:
                     if pa and pb: val = np.mean([np.min([np.linalg.norm(a - b) for b in pb]) for a in pa]) * (scale_val if scale_val > 0 else 1)
                     unit = "μm Dist" if scale_val > 0 else "px Dist"; res_disp = cv2.addWeighted(img_rgb, 0.6, cv2.merge([ma, mb, np.zeros_like(ma)]), 0.4, 0)
 
-                st.divider(); st.markdown(f"### 📷 Image {i+1}: {file.name}"); st.markdown(f"### Result: **{val:.2f} {unit}**")
-                if "real_area_str" in locals() and mode.startswith("1."): st.metric("実面積 (Area)", real_area_str)
-                if "density_str" in locals() and mode.startswith("2."): st.metric("細胞密度 (Density)", density_str)
-                c1, c2 = st.columns(2); c1.image(img_rgb, caption="元画像 (Raw)"); c2.image(res_disp, caption="解析結果 (Quantified)")
+                st.divider()
+                st.markdown(f"### 📷 Image {i+1}: {file.name}")
+                st.markdown(f"**検出グループ:** `{current_group_label}`") # 自動検出されたグループ名を表示
+                st.markdown(f"### Result: **{val:.2f} {unit}**")
                 
-                # --- 紐付けロジック: 結果CSVにもIDとバージョンを記録 ---
+                c1, c2 = st.columns(2); c1.image(img_rgb, caption="Raw"); c2.image(res_disp, caption="解析結果")
+                
                 batch_results.append({
                     "Software_Version": SOFTWARE_VERSION,
                     "Analysis_ID": st.session_state.current_analysis_id,
                     "Analysis_Timestamp_UTC": datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
                     "File Name": file.name,
-                    "Group": sample_group,
+                    "Group": current_group_label, # 動的に決定したグループ名を使用
                     "Value": val,
                     "Unit": unit,
                     "Is_Trend": mode.startswith("5."),  
                     "Ratio_Value": ratio_val if mode.startswith("5.") else 0 
                 })
         
-        # --- 修正後（推奨） ---
-    if st.button("バッチデータを確定 (Commit)", type="primary"):
-        st.session_state.analysis_history.extend(batch_results)
-        # IDの更新はここでは行わず、ユーザーが明示的に新しい解析を始めるまで維持する
-        # もしくは、ID更新ボタンを別途設ける
-        st.success("履歴に保存されました。サイドバーから設定CSVをダウンロードしてください。")
-        st.rerun()
+        # ID自動更新なし (Commitのみ)
+        if st.button("バッチデータを確定 (Commit)", type="primary"):
+            st.session_state.analysis_history.extend(batch_results)
+            st.success("データが履歴に追加されました。IDは維持されています。")
+            st.rerun()
 
     if st.session_state.analysis_history:
-        st.divider(); st.header("💾 CSV出力 (ALCOA+準拠 / UTC記録)")
+        st.divider(); st.header("💾 CSV出力")
         df_exp = pd.DataFrame(st.session_state.analysis_history)
-        
-        # カラム順序の整理
-        cols_order = [
-            "Analysis_ID", "Analysis_Timestamp_UTC", "Software_Version", 
-            "File Name", "Group", "Value", "Unit", 
-            "Is_Trend", "Ratio_Value"
-        ]
+        cols_order = ["Analysis_ID", "Analysis_Timestamp_UTC", "Software_Version", "File Name", "Group", "Value", "Unit"]
         cols_final = [c for c in cols_order if c in df_exp.columns]
-        df_exp = df_exp[cols_final]
-        
-        st.dataframe(df_exp, use_container_width=True)
+        st.dataframe(df_exp[cols_final], use_container_width=True)
         utc_filename = f"quantified_data_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S')}_UTC.csv"
-        st.download_button("📥 レポートをダウンロード", df_exp.to_csv(index=False).encode('utf-8'), utc_filename)
+        st.download_button("📥 結果CSVをダウンロード", df_exp.to_csv(index=False).encode('utf-8'), utc_filename)
 
 # ---------------------------------------------------------
 # 5. タブ2: 性能証明 (Validation Evidence - 完全復元)
