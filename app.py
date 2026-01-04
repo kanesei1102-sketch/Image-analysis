@@ -162,7 +162,17 @@ with st.sidebar:
     st.divider()
     scale_val = st.number_input("空間スケール (μm/px)", value=1.5267, format="%.4f")
     
-    if st.button("履歴をクリア"): st.session_state.analysis_history = []; st.rerun()
+    # 修正版：履歴をクリアするとIDも新しくなる
+    if st.button("履歴をクリア (Reset All)"):
+        # 1. データを空にする
+        st.session_state.analysis_history = []
+        
+        # 2. IDを新しく生成し直す (これでID重複を防げます)
+        date_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d')
+        st.session_state.current_analysis_id = f"AID-{date_str}-{str(uuid.uuid4())[:8]}"
+        
+        # 3. 再読み込み
+        st.rerun()
 
     # --- Parameter Export (Audit Trail) - COMPLETE ---
     st.divider()
