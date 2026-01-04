@@ -279,12 +279,13 @@ with tab_main:
                     "Ratio_Value": ratio_val if mode.startswith("5.") else 0 
                 })
         
-        if st.button("バッチデータを確定 (Commit)", type="primary"):
-            st.session_state.analysis_history.extend(batch_results)
-            # IDを更新（次のバッチと混ざらないように）
-            date_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d')
-            st.session_state.current_analysis_id = f"AID-{date_str}-{str(uuid.uuid4())[:8]}"
-            st.rerun()
+        # --- 修正後（推奨） ---
+    if st.button("バッチデータを確定 (Commit)", type="primary"):
+        st.session_state.analysis_history.extend(batch_results)
+        # IDの更新はここでは行わず、ユーザーが明示的に新しい解析を始めるまで維持する
+        # もしくは、ID更新ボタンを別途設ける
+        st.success("履歴に保存されました。サイドバーから設定CSVをダウンロードしてください。")
+        st.rerun()
 
     if st.session_state.analysis_history:
         st.divider(); st.header("💾 CSV出力 (ALCOA+準拠 / UTC記録)")
