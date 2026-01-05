@@ -177,7 +177,20 @@ with st.sidebar:
 
     st.divider()
     scale_val = st.number_input("空間スケール (μm/px)", value=1.5267, format="%.4f")
+    st.markdown("### 🔄 連続解析")
     
+    def prepare_next_group():
+        st.session_state.uploader_key = str(uuid.uuid4())
+        # もしグループ名の手動入力をクリアしたいならここに追加
+        # if 'group_input_key' in st.session_state: st.session_state.group_input_key = ""
+
+    st.button(
+        "📸 次のグループへ (画像のみクリア)", 
+        on_click=prepare_next_group, 
+        help="現在の解析結果は維持したまま、画像だけをリセットして次の解析準備をします"
+    )
+    
+    st.divider()
     # --- 履歴クリア & ID更新 ---
     if st.button("履歴をクリア & 新規ID発行"): 
         st.session_state.analysis_history = []
