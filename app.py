@@ -16,6 +16,9 @@ st.set_page_config(page_title="Bio-Image Quantifier V2 (JP)", layout="wide")
 # バージョン管理
 SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.02 (JP/Auto-Group)"
 
+if 'uploader_key' not in st.session_state:
+    st.session_state.uploader_key = str(uuid.uuid4())
+    
 if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
@@ -180,6 +183,7 @@ with st.sidebar:
         st.session_state.analysis_history = []
         date_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d')
         st.session_state.current_analysis_id = f"AID-{date_str}-{str(uuid.uuid4())[:8]}"
+        st.session_state.uploader_key = str(uuid.uuid4())
         st.rerun()
 
     st.divider()
@@ -227,7 +231,7 @@ with st.sidebar:
 # 4. タブ1: 解析実行
 # ---------------------------------------------------------
 with tab_main:
-    uploaded_files = st.file_uploader("画像アップロード (16-bit TIFF対応)", type=["jpg", "png", "tif", "tiff"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("画像アップロード (16-bit TIFF対応)", type=["jpg", "png", "tif", "tiff"], accept_multiple_files=True, key=st.session_state.uploader_key)
     if uploaded_files:
         st.success(f"{len(uploaded_files)} 枚の画像を解析中...")
         batch_results = []
