@@ -357,9 +357,22 @@ with tab_main:
 
                 # --- その他のモード ---
                 elif mode.startswith("3.") or (mode.startswith("5.") and trend_metric.startswith("共局在")):
-                    mask_a = get_mask(img_hsv, target_a, sens_a, bright_a); mask_b = get_mask(img_hsv, target_b, sens_b, bright_b)
-                    coloc = cv2.bitwise_and(mask_a, mask_b); denom = cv2.countNonZero(mask_a)
-                    val = (cv2.countNonZero(coloc) / denom * 100) if denom > 0 else 0; unit = "% Coloc"; res_disp = cv2.merge([mask_b, mask_a, np.zeros_like(mask_a)])
+                    mask_a = get_mask(img_hsv, target_a, sens_a, bright_a)
+                    mask_b = get_mask(img_hsv, target_b, sens_b, bright_b)
+    
+                    # 共局在計算
+                    coloc = cv2.bitwise_and(mask_a, mask_b)
+                    denom = cv2.countNonZero(mask_a)
+                    val = (cv2.countNonZero(coloc) / denom * 100) if denom > 0 else 0
+                    unit = "% Coloc"
+
+                    # StreamlitはRGB順。OpenCVのmerge(B, G, R)を、(R, G, B)の並びに直す
+                    # 今回は CH-Aを緑、CH-Bを青として扱うことで、重なりをシアン(水色)にする
+                    black = np.zeros_like(mask_a)
+    
+                    # mask_a(CH-A)を緑、mask_b(CH-B)を青、赤は0
+                    res_disp = cv2.merge([black, mask_a, mask_b])
+
                 elif mode.startswith("4."):
                     ma, mb = get_mask(img_hsv, target_a, sens_common, bright_common), get_mask(img_hsv, target_b, sens_common, bright_common)
                     pa, pb = get_centroids(ma), get_centroids(mb)
