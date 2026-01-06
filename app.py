@@ -29,7 +29,7 @@ if "current_analysis_id" not in st.session_state:
     st.session_state.current_analysis_id = f"AID-{date_str}-{unique_suffix}"
 
 # ---------------------------------------------------------
-# 1. 画像処理エンジン (HE染色対応版)
+# 1. 画像処理エンジン (HE染色・明視野対応)
 # ---------------------------------------------------------
 COLOR_MAP = {
     # 既存の蛍光・免疫染色設定
@@ -162,30 +162,36 @@ with st.sidebar:
                 target_b = st.selectbox("CH-B (対象):", list(COLOR_MAP.keys()), index=2)
                 sens_b = st.slider("B 感度", 5, 50, 20); bright_b = st.slider("B 輝度", 0, 255, 60)
         else:
+            # トレンド解析（面積）の時もROI正規化を使えるようにする
             target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys()), index=2)
             sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
-            # トレンド解析(面積)でもROI正規化を可能に
+            
             use_roi_norm = st.checkbox("組織面積 (ROI) で正規化", value=False, key="roi_mode5")
             if use_roi_norm:
-                roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=2, key="roi_col5")
+                roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=5, key="roi_col5")
                 sens_roi = st.slider("ROI感度", 5, 50, 20, key="roi_sens5")
                 bright_roi = st.slider("ROI輝度", 0, 255, 40, key="roi_bri5")
     else:
         if mode.startswith("1."):
-            target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys()))
-            sens_a = st.slider("感度", 5, 50, 20)
-            bright_a = st.slider("輝度", 0, 255, 60)
+            target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys()), index=5)
+            sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
+            
             # 面積占有率でもROI正規化ボタンを追加
             use_roi_norm = st.checkbox("組織面積 (ROI) で正規化", value=False, key="roi_mode1")
             if use_roi_norm:
-                roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=2, key="roi_col1")
+                roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=5, key="roi_col1")
                 sens_roi = st.slider("ROI感度", 5, 50, 20, key="roi_sens1")
                 bright_roi = st.slider("ROI輝度", 0, 255, 40, key="roi_bri1")
         elif mode.startswith("2."):
-            min_size = st.slider("最小核サイズ (px)", 10, 500, 50); bright_count = st.slider("検出しきい値", 0, 255, 50)
+            # カウントモードでも色指定を可能に（HE染色対応）
+            target_a = st.selectbox("核の色:", list(COLOR_MAP.keys()), index=4)
+            sens_a = st.slider("核の感度", 5, 50, 20)
+            bright_a = st.slider("核の輝度しきい値", 0, 255, 50)
+            min_size = st.slider("最小核サイズ (px)", 10, 500, 50)
+            
             use_roi_norm = st.checkbox("組織面積 (ROI) で正規化", value=True, key="roi_mode2")
             if use_roi_norm:
-                roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=2, key="roi_col2")
+                roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=5, key="roi_col2")
                 sens_roi = st.slider("ROI感度", 5, 50, 20, key="roi_sens2")
                 bright_roi = st.slider("ROI輝度", 0, 255, 40, key="roi_bri2")
         elif mode.startswith("3."):
@@ -199,8 +205,8 @@ with st.sidebar:
             sens_common = st.slider("共通感度", 5, 50, 20); bright_common = st.slider("共通輝度", 0, 255, 60)
 
     st.divider()
-    scale_val = st.number_input("空間スケール (μm/px)", value=1.5267, format="%.4f")
-    st.markdown("### 🔄 連続解析")
+    # 空間スケールを計算値 3.0769 に設定 (デフォルト)
+    scale_val = st.number_input("空間スケール (μm/px)", value=3.0769, format="%.4f")
     
     def prepare_next_group():
         st.session_state.uploader_key = str(uuid.uuid4())
@@ -233,27 +239,6 @@ with st.sidebar:
     if group_strategy.startswith("手動"): current_params["手動グループラベル"] = sample_group
     else: current_params["ファイル名区切り文字"] = filename_sep
 
-    # 他のパラメータも記録
-    if "trend_metric" in locals(): current_params["トレンド指標"] = trend_metric
-    if "target_a" in locals(): current_params["対象A"] = target_a
-    if "target_b" in locals(): current_params["対象B"] = target_b
-    if "roi_color" in locals(): current_params["ROI色"] = roi_color
-    if "sens_a" in locals(): current_params["感度A"] = sens_a
-    if "bright_a" in locals(): current_params["輝度A"] = bright_a
-    if "sens_b" in locals(): current_params["感度B"] = sens_b
-    if "bright_b" in locals(): current_params["輝度B"] = bright_b
-    if "min_size" in locals(): current_params["最小核サイズ_px"] = min_size
-    if "bright_count" in locals(): current_params["検出閾値"] = bright_count
-    if "use_roi_norm" in locals(): current_params["ROI正規化有効"] = use_roi_norm
-    if "sens_roi" in locals(): current_params["ROI感度"] = sens_roi
-    if "bright_roi" in locals(): current_params["ROI輝度"] = bright_roi
-    if "sens_common" in locals(): current_params["共通感度"] = sens_common
-    if "bright_common" in locals(): current_params["共通輝度"] = bright_common
-
-    df_params = pd.DataFrame([current_params]).T.reset_index()
-    df_params.columns = ["パラメータ名", "設定値"]
-    param_filename = f"params_{st.session_state.current_analysis_id}.csv"
-
     # アクティブな設定値のテーブル表示用
     current_active_params = {
         "解析モード": mode,
@@ -265,6 +250,9 @@ with st.sidebar:
     st.markdown("### ⚙️ トレーサビリティ (現在設定)")
     st.table(pd.DataFrame([current_active_params]).T)
     
+    df_params = pd.DataFrame([current_params]).T.reset_index()
+    df_params.columns = ["パラメータ名", "設定値"]
+    param_filename = f"params_{st.session_state.current_analysis_id}.csv"
     st.download_button("📥 設定CSVをダウンロード", df_params.to_csv(index=False).encode('utf-8-sig'), param_filename, "text/csv")
 
     st.divider()
@@ -337,11 +325,16 @@ with tab_main:
                         "正規化基準": roi_status
                     }
 
-                # --- 細胞核カウントモード (ROI正規化対応) ---
+                # --- 細胞核カウントモード (ROI正規化 & 色指定対応) ---
                 elif mode.startswith("2."):
-                    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY); _, th = cv2.threshold(gray, bright_count, 255, cv2.THRESH_BINARY)
-                    blur = cv2.GaussianBlur(gray, (5,5), 0); _, otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-                    cnts, _ = cv2.findContours(cv2.bitwise_and(th, otsu), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    # 改良ポイント：指定された色のマスクを使用して核を抽出（HE・免疫染色対応）
+                    mask_nuclei = get_mask(img_hsv, target_a, sens_a, bright_a)
+                    
+                    # 核の分離を良くするモルフォロジー演算
+                    kernel = np.ones((3,3), np.uint8)
+                    mask_nuclei = cv2.morphologyEx(mask_nuclei, cv2.MORPH_OPEN, kernel)
+                    
+                    cnts, _ = cv2.findContours(mask_nuclei, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     valid = [c for c in cnts if cv2.contourArea(c) > min_size]; val, unit = len(valid), "cells"
                     cv2.drawContours(res_disp, valid, -1, (0,255,0), 2)
                     
@@ -353,6 +346,7 @@ with tab_main:
                         roi_px = cv2.countNonZero(mask_roi)
                         a_target_mm2 = roi_px * ((scale_val/1000)**2)
                         roi_status = "Inside ROI"
+                        # ROIの外郭を赤線で描画
                         cv2.drawContours(res_disp, cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], -1, (255,0,0), 3)
 
                     density = val / a_target_mm2 if a_target_mm2 > 0 else 0
@@ -377,6 +371,7 @@ with tab_main:
                 st.markdown(f"### 📷 画像 {i+1}: {file.name}")
                 st.markdown(f"**検出グループ:** `{current_group_label}`")
                 
+                # 詳細な結果表示
                 if "密度(cells/mm2)" in extra_data:
                     c_m1, c_m2, c_m3 = st.columns(3)
                     c_m1.metric("カウント数", f"{int(val)} cells")
