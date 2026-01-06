@@ -145,6 +145,8 @@ with st.sidebar:
     st.divider()
 
     # 解析パラメータ動的設定
+    current_params_dict = {} # 現在のアクティブなパラメータを保存する辞書
+
     if mode.startswith("5."):
         st.markdown("### 🔢 トレンド解析条件")
         trend_metric = st.radio("測定指標:", ["共局在率", "面積占有率"])
@@ -153,6 +155,9 @@ with st.sidebar:
         if group_strategy.startswith("手動"):
             sample_group = f"{ratio_val}{ratio_unit}" 
         
+        current_params_dict["トレンド指標"] = trend_metric
+        current_params_dict["条件値"] = f"{ratio_val}{ratio_unit}"
+
         if trend_metric.startswith("共局在"):
             c1, c2 = st.columns(2)
             with c1:
@@ -161,16 +166,20 @@ with st.sidebar:
             with c2:
                 target_b = st.selectbox("CH-B (対象):", list(COLOR_MAP.keys()), index=2)
                 sens_b = st.slider("B 感度", 5, 50, 20); bright_b = st.slider("B 輝度", 0, 255, 60)
+            current_params_dict.update({"CH-A": target_a, "感度A": sens_a, "輝度A": bright_a, "CH-B": target_b, "感度B": sens_b, "輝度B": bright_b})
         else:
             # トレンド解析（面積）の時もROI正規化を使えるようにする
             target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys()), index=2)
             sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
             
             use_roi_norm = st.checkbox("組織面積 (ROI) で正規化", value=False, key="roi_mode5")
+            current_params_dict.update({"解析対象色": target_a, "感度": sens_a, "輝度": bright_a, "ROI正規化": use_roi_norm})
+            
             if use_roi_norm:
                 roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=5, key="roi_col5")
                 sens_roi = st.slider("ROI感度", 5, 50, 20, key="roi_sens5")
                 bright_roi = st.slider("ROI輝度", 0, 255, 40, key="roi_bri5")
+                current_params_dict.update({"ROI色": roi_color, "ROI感度": sens_roi, "ROI輝度": bright_roi})
     else:
         if mode.startswith("1."):
             target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys()), index=5)
@@ -178,10 +187,14 @@ with st.sidebar:
             
             # 面積占有率でもROI正規化ボタンを追加
             use_roi_norm = st.checkbox("組織面積 (ROI) で正規化", value=False, key="roi_mode1")
+            current_params_dict.update({"解析対象色": target_a, "感度": sens_a, "輝度": bright_a, "ROI正規化": use_roi_norm})
+            
             if use_roi_norm:
                 roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=5, key="roi_col1")
                 sens_roi = st.slider("ROI感度", 5, 50, 20, key="roi_sens1")
                 bright_roi = st.slider("ROI輝度", 0, 255, 40, key="roi_bri1")
+                current_params_dict.update({"ROI色": roi_color, "ROI感度": sens_roi, "ROI輝度": bright_roi})
+
         elif mode.startswith("2."):
             # カウントモードでも色指定を可能に（HE染色対応）
             target_a = st.selectbox("核の色:", list(COLOR_MAP.keys()), index=4)
@@ -190,23 +203,32 @@ with st.sidebar:
             min_size = st.slider("最小核サイズ (px)", 10, 500, 50)
             
             use_roi_norm = st.checkbox("組織面積 (ROI) で正規化", value=True, key="roi_mode2")
+            current_params_dict.update({"核の色": target_a, "核の感度": sens_a, "核の輝度": bright_a, "最小サイズ": min_size, "ROI正規化": use_roi_norm})
+            
             if use_roi_norm:
                 roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=5, key="roi_col2")
                 sens_roi = st.slider("ROI感度", 5, 50, 20, key="roi_sens2")
                 bright_roi = st.slider("ROI輝度", 0, 255, 40, key="roi_bri2")
+                current_params_dict.update({"ROI色": roi_color, "ROI感度": sens_roi, "ROI輝度": bright_roi})
+
         elif mode.startswith("3."):
             c1, c2 = st.columns(2)
             with c1:
                 target_a = st.selectbox("CH-A:", list(COLOR_MAP.keys()), index=3); sens_a = st.slider("A 感度", 5, 50, 20); bright_a = st.slider("A 輝度", 0, 255, 60)
             with c2:
                 target_b = st.selectbox("CH-B:", list(COLOR_MAP.keys()), index=2); sens_b = st.slider("B 感度", 5, 50, 20); bright_b = st.slider("B 輝度", 0, 255, 60)
+            current_params_dict.update({"CH-A": target_a, "感度A": sens_a, "輝度A": bright_a, "CH-B": target_b, "感度B": sens_b, "輝度B": bright_b})
+
         elif mode.startswith("4."):
             target_a = st.selectbox("起点 A:", list(COLOR_MAP.keys()), index=2); target_b = st.selectbox("対象 B:", list(COLOR_MAP.keys()), index=3)
             sens_common = st.slider("共通感度", 5, 50, 20); bright_common = st.slider("共通輝度", 0, 255, 60)
+            current_params_dict.update({"起点A": target_a, "対象B": target_b, "共通感度": sens_common, "共通輝度": bright_common})
 
     st.divider()
     # 空間スケールを計算値 3.0769 に設定 (デフォルト)
     scale_val = st.number_input("空間スケール (μm/px)", value=3.0769, format="%.4f")
+    current_params_dict["空間スケール"] = scale_val
+    current_params_dict["解析モード"] = mode
     
     def prepare_next_group():
         st.session_state.uploader_key = str(uuid.uuid4())
@@ -225,87 +247,15 @@ with st.sidebar:
         st.session_state.uploader_key = str(uuid.uuid4())
         st.rerun()
 
-    # -------------------------------------------------------------------------
-    # パラメータ保存ロジック 
-    # -------------------------------------------------------------------------
-    # 基本パラメータ
-    current_active_params = {
-        "解析モード": mode,
-        "空間スケール": scale_val,
-        "ROI正規化": use_roi_norm if 'use_roi_norm' in locals() else False
-    }
-
-    # モード別の詳細パラメータを追加
-    if mode.startswith("1.") or (mode.startswith("5.") and trend_metric.startswith("面積")):
-        current_active_params.update({
-            "解析対象色": target_a,
-            "感度": sens_a,
-            "輝度": bright_a
-        })
-        if 'use_roi_norm' in locals() and use_roi_norm:
-            current_active_params.update({
-                "ROI色": roi_color,
-                "ROI感度": sens_roi,
-                "ROI輝度": bright_roi
-            })
-
-    elif mode.startswith("2."):
-        current_active_params.update({
-            "核の色": target_a,
-            "核の感度": sens_a,
-            "核の輝度": bright_a,
-            "最小サイズ": min_size
-        })
-        if use_roi_norm:
-            current_active_params.update({
-                "ROI色": roi_color,
-                "ROI感度": sens_roi,
-                "ROI輝度": bright_roi
-            })
-
-    elif mode.startswith("3.") or (mode.startswith("5.") and trend_metric.startswith("共局在")):
-        current_active_params.update({
-            "CH-A": target_a, "感度A": sens_a, "輝度A": bright_a,
-            "CH-B": target_b, "感度B": sens_b, "輝度B": bright_b
-        })
-
-    elif mode.startswith("4."):
-        current_active_params.update({
-            "起点A": target_a,
-            "対象B": target_b,
-            "共通感度": sens_common,
-            "共通輝度": bright_common
-        })
-
-    st.divider()
-    st.markdown("### ⚙️ 監査証跡 (パラメータログ)")
-    
-    current_params = {
-        "ソフトウェア・バージョン": SOFTWARE_VERSION, 
-        "解析ID": st.session_state.current_analysis_id,
-        "解析日時_UTC": datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
-        "モード": mode,
-        "空間スケール_um_px": scale_val,
-        "グループ化戦略": group_strategy
-    }
-    if group_strategy.startswith("手動"): current_params["手動グループラベル"] = sample_group
-    else: current_params["ファイル名区切り文字"] = filename_sep
-
-    # アクティブな設定値のテーブル表示用
-    current_active_params = {
-        "解析モード": mode,
-        "空間スケール": scale_val,
-        "ROI正規化": use_roi_norm if 'use_roi_norm' in locals() else False
-    }
-
     st.divider()
     st.markdown("### ⚙️ トレーサビリティ (現在設定)")
-    st.table(pd.DataFrame([current_active_params]).T)
+    st.table(pd.DataFrame([current_params_dict]).T)
     
-    df_params = pd.DataFrame([current_params]).T.reset_index()
-    df_params.columns = ["パラメータ名", "設定値"]
+    # 監査ログ用CSV (設定値のみ)
+    df_params_log = pd.DataFrame([current_params_dict]).T.reset_index()
+    df_params_log.columns = ["パラメータ名", "設定値"]
     param_filename = f"params_{st.session_state.current_analysis_id}.csv"
-    st.download_button("📥 設定CSVをダウンロード", df_params.to_csv(index=False).encode('utf-8-sig'), param_filename, "text/csv")
+    st.download_button("📥 設定CSVをダウンロード", df_params_log.to_csv(index=False).encode('utf-8-sig'), param_filename, "text/csv")
 
     st.divider()
     st.caption("【免責事項】")
@@ -325,12 +275,9 @@ with tab_main:
             img_raw = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
             
             if img_raw is not None:
-                # --- 自動グループ化ロジック ---
                 if group_strategy.startswith("ファイル名"):
-                    try:
-                        detected_group = file.name.split(filename_sep)[0]
-                    except:
-                        detected_group = "Unknown"
+                    try: detected_group = file.name.split(filename_sep)[0]
+                    except: detected_group = "Unknown"
                     current_group_label = detected_group
                 else:
                     current_group_label = sample_group
@@ -353,7 +300,7 @@ with tab_main:
                     roi_status = "Field of View"
                     final_mask = mask_target
                     
-                    if use_roi_norm:
+                    if 'use_roi_norm' in locals() and use_roi_norm:
                         mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
                         # 組織内部にある抽出色のみをカウント
                         final_mask = cv2.bitwise_and(mask_target, mask_roi)
@@ -393,7 +340,7 @@ with tab_main:
                     a_target_mm2 = fov_mm2
                     roi_status = "Field of View"
                     
-                    if use_roi_norm:
+                    if 'use_roi_norm' in locals() and use_roi_norm:
                         mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
                         roi_px = cv2.countNonZero(mask_roi)
                         a_target_mm2 = roi_px * ((scale_val/1000)**2)
@@ -438,6 +385,7 @@ with tab_main:
                 
                 c1, c2 = st.columns(2); c1.image(img_rgb, caption="元画像 (Raw)"); c2.image(res_disp, caption="解析結果")
                 
+                # 結果データの構築 (パラメータを含む)
                 row_data = {
                     "ソフトウェア・バージョン": SOFTWARE_VERSION,
                     "解析ID": st.session_state.current_analysis_id,
@@ -448,7 +396,9 @@ with tab_main:
                     "単位": unit,
                 }
                 if extra_data: row_data.update(extra_data)
-                row_data.update(current_active_params)
+                # ★ ここで確実にパラメータを結合 ★
+                row_data.update(current_params_dict)
+                
                 batch_results.append(row_data)
         
         if st.button("バッチデータを確定 (Commit)", type="primary"):
