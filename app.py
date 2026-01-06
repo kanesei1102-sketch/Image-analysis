@@ -12,7 +12,7 @@ import uuid
 # 0. ページ設定 & 定数
 # ---------------------------------------------------------
 st.set_page_config(page_title="Bio-Image Quantifier V2 (JP)", layout="wide")
-SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.02 (Full-Data/Stable)"
+SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.02 (Ultimate/Full-Display)"
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = str(uuid.uuid4())
@@ -37,6 +37,7 @@ COLOR_MAP = {
     "エオジン (Cytoplasm)": {"lower": np.array([140, 20, 100]), "upper": np.array([180, 255, 255])}
 }
 
+# 表示色 (BGRではなくRGBで定義)
 DISPLAY_COLORS = {
     "茶色 (DAB)": (165, 42, 42),
     "緑色 (GFP)": (0, 255, 0),
@@ -51,6 +52,7 @@ def get_mask(hsv_img, color_name, sens, bright_min):
     l = conf["lower"].copy()
     u = conf["upper"].copy()
     
+    # 赤色系のHue回り込み処理
     if color_name == "赤色 (RFP)" or "エオジン" in color_name:
         lower1 = np.array([0, 30, bright_min])
         upper1 = np.array([10 + sens, 255, 255])
@@ -80,29 +82,27 @@ def get_centroids(mask):
         if M["m00"] != 0: pts.append(np.array([M["m10"]/M["m00"], M["m01"]/M["m00"]]))
     return pts
 
-# --- [新機能] 全指標を一括計算するヘルパー関数 ---
-def calc_metrics(mask, scale_val, fov_area_mm2, min_size, prefix=""):
+def calc_metrics(mask, scale_val, denominator_area_mm2, min_size, prefix=""):
     """
-    マスクから面積、カウント、密度などを一括計算して辞書で返す
-    prefix: "A_" や "B_" などを付与して識別しやすくする
+    あらゆるマスクに対して、面積・カウント・密度を計算して返す
     """
     px_count = cv2.countNonZero(mask)
     area_mm2 = px_count * ((scale_val/1000)**2)
     
-    # カウント処理 (モルフォロジーで分離してから数える)
+    # カウント（粒子解析）
     kernel = np.ones((3,3), np.uint8)
     mask_opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     cnts, _ = cv2.findContours(mask_opened, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     valid_cnts = [c for c in cnts if cv2.contourArea(c) > min_size]
     count = len(valid_cnts)
     
-    density = count / fov_area_mm2 if fov_area_mm2 > 0 else 0
+    density = count / denominator_area_mm2 if denominator_area_mm2 > 0 else 0
     
     return {
-        f"{prefix}Area_px": px_count,
-        f"{prefix}Area_mm2": round(area_mm2, 6),
+        f"{prefix}Area(px)": px_count,
+        f"{prefix}Area(mm2)": round(area_mm2, 6),
         f"{prefix}Count": count,
-        f"{prefix}Density_per_mm2": round(density, 2)
+        f"{prefix}Density(/mm2)": round(density, 2)
     }
 
 # ---------------------------------------------------------
@@ -160,11 +160,9 @@ with st.sidebar:
 
     st.divider()
 
-    # パラメータ辞書の初期化
+    # --- パラメータ設定 (全モードで共通化できるものは共通化) ---
     current_params_dict = {}
 
-    # --- 共通パラメータ (カウント用など) をサイドバー下部または各モードに追加 ---
-    # モード特有のUI構築
     if mode.startswith("5."):
         st.markdown("### 🔢 トレンド解析条件")
         trend_metric = st.radio("測定指標:", ["共局在率", "面積占有率"])
@@ -174,7 +172,8 @@ with st.sidebar:
         current_params_dict["条件値"] = f"{ratio_val}{ratio_unit}"
         
         if trend_metric.startswith("共局在"):
-            st.info("設定: CH-B(基準) に対する CH-A(対象) の重なり")
+            # 共局在設定
+            st.info("設定: **CH-B(基準/分母)** 上の **CH-A(対象/分子)**")
             c1, c2 = st.columns(2)
             with c1:
                 target_b = st.selectbox("CH-B (基準/分母):", list(COLOR_MAP.keys()), index=3)
@@ -186,9 +185,10 @@ with st.sidebar:
             min_size = st.slider("最小細胞サイズ (px, 密度計算用)", 10, 500, 50)
             current_params_dict.update({"CH-A": target_a, "感度A": sens_a, "CH-B": target_b, "感度B": sens_b, "最小サイズ": min_size})
         else:
+            # 面積設定
             target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys()), index=2)
             sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
-            min_size = st.slider("最小細胞サイズ (px, 密度計算用)", 10, 500, 50)
+            min_size = st.slider("最小細胞サイズ (px, 参考カウント用)", 10, 500, 50)
             use_roi_norm = st.checkbox("ROI正規化", value=False)
             current_params_dict.update({"解析対象色": target_a, "感度": sens_a, "ROI正規化": use_roi_norm, "最小サイズ": min_size})
             if use_roi_norm:
@@ -208,14 +208,13 @@ with st.sidebar:
             sens_a = st.slider("A 感度 (対象)", 5, 50, 20)
             bright_a = st.slider("A 輝度", 0, 255, 60)
         
-        # ★ここ重要: 共局在モードでも密度を出すためにサイズ設定を追加
+        # 密度計算のためのパラメータ
         min_size = st.slider("最小細胞サイズ (px, 密度計算用)", 10, 500, 50)
         current_params_dict.update({"CH-A": target_a, "感度A": sens_a, "CH-B": target_b, "感度B": sens_b, "最小サイズ": min_size})
 
     elif mode.startswith("1."):
         target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys()), index=5)
         sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
-        # 面積モードでもカウント用パラメータを追加
         min_size = st.slider("最小細胞サイズ (px, 参考カウント用)", 10, 500, 50)
         use_roi_norm = st.checkbox("ROI正規化", value=False)
         current_params_dict.update({"解析対象色": target_a, "感度": sens_a, "ROI正規化": use_roi_norm, "最小サイズ": min_size})
@@ -238,7 +237,7 @@ with st.sidebar:
     elif mode.startswith("4."):
         target_a = st.selectbox("起点 A:", list(COLOR_MAP.keys()), index=2); target_b = st.selectbox("対象 B:", list(COLOR_MAP.keys()), index=3)
         sens_common = st.slider("共通感度", 5, 50, 20); bright_common = st.slider("共通輝度", 0, 255, 60)
-        min_size = 50 # 距離モードでは簡易固定
+        min_size = 50 
         current_params_dict.update({"起点A": target_a, "対象B": target_b})
 
     st.divider()
@@ -283,38 +282,41 @@ with tab_main:
                 h, w = img_rgb.shape[:2]
                 res_disp = np.zeros_like(img_rgb)
                 
-                # 面積計算の基礎
-                fov_area_mm2 = (h * w) * ((scale_val/1000)**2)
+                # デフォルトの分母面積 (FoV)
+                denominator_area_mm2 = (h * w) * ((scale_val/1000)**2)
+                roi_status = "FoV"
                 extra_data = {}
 
                 # ----------------------------
                 # 共局在解析 (Mode 3 & 5)
                 # ----------------------------
                 if mode.startswith("3.") or (mode.startswith("5.") and trend_metric.startswith("共局在")):
-                    mask_a = get_mask(img_hsv, target_a, sens_a, bright_a) # 対象
-                    mask_b = get_mask(img_hsv, target_b, sens_b, bright_b) # 基準(分母)
+                    mask_a = get_mask(img_hsv, target_a, sens_a, bright_a)
+                    mask_b = get_mask(img_hsv, target_b, sens_b, bright_b)
 
-                    # 1. 基礎データの全計算 (ここが新しい！)
-                    metrics_a = calc_metrics(mask_a, scale_val, fov_area_mm2, min_size, "CH-A_")
-                    metrics_b = calc_metrics(mask_b, scale_val, fov_area_mm2, min_size, "CH-B_")
-                    extra_data.update(metrics_a)
-                    extra_data.update(metrics_b)
+                    # 分母・分子それぞれの基礎データを全計算して表示
+                    metrics_a = calc_metrics(mask_a, scale_val, denominator_area_mm2, min_size, "CH-A_")
+                    metrics_b = calc_metrics(mask_b, scale_val, denominator_area_mm2, min_size, "CH-B_")
+                    extra_data.update(metrics_a); extra_data.update(metrics_b)
 
-                    # 2. 共局在の計算
-                    denom = cv2.countNonZero(mask_b)
+                    # 共局在計算 (CH-Bを分母とする)
+                    denom_px = cv2.countNonZero(mask_b)
                     coloc = cv2.bitwise_and(mask_a, mask_b)
-                    val = (cv2.countNonZero(coloc) / denom * 100) if denom > 0 else 0
+                    val = (cv2.countNonZero(coloc) / denom_px * 100) if denom_px > 0 else 0
                     unit = "% Coloc"
                     
-                    # 共局自体の面積等も計算
-                    metrics_coloc = calc_metrics(coloc, scale_val, fov_area_mm2, 0, "Coloc_")
+                    # 共局在領域自体の詳細
+                    metrics_coloc = calc_metrics(coloc, scale_val, denominator_area_mm2, 0, "Coloc_")
                     extra_data.update(metrics_coloc)
 
-                    # 表示処理 (直感的な色配置)
+                    # 【修正】直感的な色表示 (選択色をそのまま描画)
                     color_a = DISPLAY_COLORS[target_a]
                     color_b = DISPLAY_COLORS[target_b]
+                    
+                    # マスク部分を着色
                     res_disp[mask_a > 0] = color_a
                     current_b_pixels = np.zeros_like(res_disp); current_b_pixels[mask_b > 0] = color_b
+                    # 重ね合わせ (bitwise_orで混色を表現)
                     res_disp = cv2.bitwise_or(res_disp, current_b_pixels)
 
                 # ----------------------------
@@ -323,26 +325,28 @@ with tab_main:
                 elif mode.startswith("1.") or (mode.startswith("5.") and trend_metric.startswith("面積")):
                     mask_target = get_mask(img_hsv, target_a, sens_a, bright_a)
                     final_mask = mask_target
-                    roi_status = "FoV"
-                    denominator_area = fov_area_mm2
                     
                     if 'use_roi_norm' in locals() and use_roi_norm:
                         mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
                         final_mask = cv2.bitwise_and(mask_target, mask_roi)
                         roi_status = "ROI"
-                        denominator_area = cv2.countNonZero(mask_roi) * ((scale_val/1000)**2)
+                        denominator_area_mm2 = cv2.countNonZero(mask_roi) * ((scale_val/1000)**2)
                         
-                        # ROIの基礎データも出す
-                        extra_data.update(calc_metrics(mask_roi, scale_val, fov_area_mm2, min_size, "ROI_"))
+                        # ROI自体のデータ
+                        extra_data.update(calc_metrics(mask_roi, scale_val, (h*w)*((scale_val/1000)**2), min_size, "ROI_"))
                         roi_conts, _ = cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                         cv2.drawContours(res_disp, roi_conts, -1, (100,100,100), 2)
 
                     # ターゲットの詳細計算
-                    metrics_tgt = calc_metrics(final_mask, scale_val, denominator_area, min_size, "Target_")
+                    metrics_tgt = calc_metrics(final_mask, scale_val, denominator_area_mm2, min_size, "Target_")
                     extra_data.update(metrics_tgt)
                     
-                    val = (cv2.countNonZero(final_mask) / (cv2.countNonZero(mask_roi) if 'use_roi_norm' in locals() and use_roi_norm else (h*w)) * 100)
+                    # 面積率計算
+                    target_px = cv2.countNonZero(final_mask)
+                    denom_px = cv2.countNonZero(mask_roi) if 'use_roi_norm' in locals() and use_roi_norm else (h*w)
+                    val = (target_px / denom_px * 100) if denom_px > 0 else 0
                     unit = "% Area"
+                    
                     res_disp[final_mask > 0] = DISPLAY_COLORS[target_a]
                     extra_data["Normalization_Base"] = roi_status
 
@@ -351,8 +355,21 @@ with tab_main:
                 # ----------------------------
                 elif mode.startswith("2."):
                     mask_nuclei = get_mask(img_hsv, target_a, sens_a, bright_a)
-                    # カウントモードの詳細計算
-                    metrics_nuc = calc_metrics(mask_nuclei, scale_val, fov_area_mm2, min_size, "Nuclei_")
+                    
+                    # ROI処理
+                    if use_roi_norm:
+                        mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
+                        denominator_area_mm2 = cv2.countNonZero(mask_roi) * ((scale_val/1000)**2)
+                        roi_status = "ROI"
+                        extra_data.update(calc_metrics(mask_roi, scale_val, (h*w)*((scale_val/1000)**2), min_size, "ROI_"))
+                        roi_conts, _ = cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        cv2.drawContours(res_disp, roi_conts, -1, (100,100,100), 2)
+
+                    # カウント計算 (ROI内のみ有効にするなど)
+                    if use_roi_norm:
+                        mask_nuclei = cv2.bitwise_and(mask_nuclei, mask_roi)
+
+                    metrics_nuc = calc_metrics(mask_nuclei, scale_val, denominator_area_mm2, min_size, "Nuclei_")
                     extra_data.update(metrics_nuc)
                     
                     val = metrics_nuc["Nuclei_Count"]
@@ -360,21 +377,12 @@ with tab_main:
                     
                     # 描画
                     kernel = np.ones((3,3), np.uint8)
-                    mask_nuclei = cv2.morphologyEx(mask_nuclei, cv2.MORPH_OPEN, kernel)
-                    cnts, _ = cv2.findContours(mask_nuclei, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    mask_disp = cv2.morphologyEx(mask_nuclei, cv2.MORPH_OPEN, kernel)
+                    cnts, _ = cv2.findContours(mask_disp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     valid = [c for c in cnts if cv2.contourArea(c) > min_size]
                     cv2.drawContours(res_disp, valid, -1, DISPLAY_COLORS[target_a], 2)
                     
-                    denominator_area = fov_area_mm2
-                    if use_roi_norm:
-                        mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
-                        denominator_area = cv2.countNonZero(mask_roi) * ((scale_val/1000)**2)
-                        # ROIデータ
-                        extra_data.update(calc_metrics(mask_roi, scale_val, fov_area_mm2, min_size, "ROI_"))
-                        roi_conts, _ = cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                        cv2.drawContours(res_disp, roi_conts, -1, (100,100,100), 2)
-
-                    extra_data["Corrected_Density"] = round(val/denominator_area, 2) if denominator_area > 0 else 0
+                    extra_data["Normalization_Base"] = roi_status
 
                 # ----------------------------
                 # 距離解析 (Mode 4)
@@ -382,27 +390,49 @@ with tab_main:
                 elif mode.startswith("4."):
                     ma = get_mask(img_hsv, target_a, sens_common, bright_common)
                     mb = get_mask(img_hsv, target_b, sens_common, bright_common)
-                    # 距離モードでもそれぞれの基礎データは出す
-                    extra_data.update(calc_metrics(ma, scale_val, fov_area_mm2, min_size, "ObjA_"))
-                    extra_data.update(calc_metrics(mb, scale_val, fov_area_mm2, min_size, "ObjB_"))
+                    extra_data.update(calc_metrics(ma, scale_val, denominator_area_mm2, min_size, "ObjA_"))
+                    extra_data.update(calc_metrics(mb, scale_val, denominator_area_mm2, min_size, "ObjB_"))
                     
                     pa, pb = get_centroids(ma), get_centroids(mb)
                     if pa and pb: val = np.mean([np.min([np.linalg.norm(a - b) for b in pb]) for a in pa]) * scale_val
                     unit = "μm"
                     res_disp = cv2.addWeighted(img_rgb, 0.5, cv2.merge([ma, mb, np.zeros_like(ma)]), 0.5, 0)
 
-                # 結果表示とデータ格納
+                # --- 結果表示UI (ここがユーザー様の要望に対する回答) ---
                 st.divider()
-                st.markdown(f"**画像:** `{file.name}` | **グループ:** `{current_group_label}`")
+                st.markdown(f"**画像:** `{file.name}`")
+                
+                # メトリクス列の作成
+                m_cols = st.columns(4)
+                m_cols[0].metric(f"解析結果 ({unit})", f"{val:.2f}")
+                
+                # モードに応じて重要なサブ指標を自動表示
+                if "CH-B_Density(/mm2)" in extra_data:
+                    m_cols[1].metric("基準密度 (CH-B)", f"{extra_data['CH-B_Density(/mm2)']} /mm²")
+                elif "Nuclei_Density(/mm2)" in extra_data:
+                    m_cols[1].metric("核密度", f"{extra_data['Nuclei_Density(/mm2)']} /mm²")
+                
+                if "Coloc_Area(mm2)" in extra_data:
+                    m_cols[2].metric("共局在面積", f"{extra_data['Coloc_Area(mm2)']} mm²")
+                elif "Target_Area(mm2)" in extra_data:
+                    m_cols[2].metric("対象面積", f"{extra_data['Target_Area(mm2)']} mm²")
+
+                if "Normalization_Base" in extra_data:
+                    m_cols[3].metric("正規化基準", extra_data["Normalization_Base"])
+
+                # 詳細データの展開表示
+                with st.expander("📊 すべての計算指標を確認 (密度・面積・カウント)"):
+                    st.dataframe(pd.DataFrame([extra_data]).T.rename(columns={0: "Value"}))
+
                 c1, c2 = st.columns(2)
                 c1.image(img_rgb, caption="Raw Image")
                 c2.image(res_disp, caption="Analysis Result (Color Corrected)")
 
+                # データ格納
                 row_data = {
                     "File": file.name, "Group": current_group_label, "Value": val, "Unit": unit, 
                     "ID": st.session_state.current_analysis_id
                 }
-                # すべてのデータを結合
                 row_data.update(extra_data)
                 row_data.update(current_params_dict)
                 batch_results.append(row_data)
@@ -442,8 +472,7 @@ with tab_val:
         m2.metric("線形性 (R²)", f"{r2:.4f}")
         m3.metric("検証画像数", "3,200+")
 
-        st.divider()
-        st.subheader("📈 1. 計数性能と線形性 (W1 vs W2)")
+        st.subheader("1. 線形性評価")
         fig1, ax1 = plt.subplots(figsize=(10, 5))
         ax1.plot([0, 110], [0, 110], 'k--', alpha=0.3, label='Ideal Line')
         ax1.scatter(df_lin['Ground Truth'], df_lin['Value'], color='#1f77b4', s=100, label='W1 (Nuclei)', zorder=5)
