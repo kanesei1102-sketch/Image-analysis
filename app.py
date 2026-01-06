@@ -45,7 +45,7 @@ COLOR_MAP = {
     "エオジン (Cytoplasm)": {"lower": np.array([140, 20, 100]), "upper": np.array([180, 255, 255])}
 }
 
-# --- 修正後の get_mask 関数 ---
+# --- 修正後の get_mask 関数 (色の重複を防止するガード機能付き) ---
 def get_mask(hsv_img, color_name, sens, bright_min):
     conf = COLOR_MAP[color_name]
     
@@ -89,6 +89,21 @@ def get_centroids(mask):
         M = cv2.moments(c)
         if M["m00"] != 0: pts.append(np.array([M["m10"]/M["m00"], M["m01"]/M["m00"]]))
     return pts
+
+# ---------------------------------------------------------
+# [追加] 色名から表示チャンネル(R,G,B)を自動判定する関数
+# ---------------------------------------------------------
+def get_channel_index(color_name):
+    # 赤系キーワードが含まれていれば R(0) チャンネル
+    if any(k in color_name for k in ["赤", "エオジン", "茶色"]):
+        return 0 
+    # 緑系なら G(1)
+    elif "緑" in color_name:
+        return 1
+    # 青系なら B(2)
+    elif any(k in color_name for k in ["青", "ヘマトキシリン"]):
+        return 2
+    return 1 # デフォルトは緑
 
 # ---------------------------------------------------------
 # 2. バリデーションデータ読み込み
@@ -176,13 +191,14 @@ with st.sidebar:
         current_params_dict["条件値"] = f"{ratio_val}{ratio_unit}"
 
         if trend_metric.startswith("共局在"):
+            # UIラベルを汎用化
             c1, c2 = st.columns(2)
             with c1:
-                target_a = st.selectbox("CH-A (基準):", list(COLOR_MAP.keys()), index=3)
-                sens_a = st.slider("A 感度", 5, 50, 20); bright_a = st.slider("A 輝度", 0, 255, 60)
-            with c2:
-                target_b = st.selectbox("CH-B (対象):", list(COLOR_MAP.keys()), index=2)
+                target_b = st.selectbox("CH-B (基準/分母):", list(COLOR_MAP.keys()), index=3)
                 sens_b = st.slider("B 感度", 5, 50, 20); bright_b = st.slider("B 輝度", 0, 255, 60)
+            with c2:
+                target_a = st.selectbox("CH-A (対象/分子):", list(COLOR_MAP.keys()), index=2)
+                sens_a = st.slider("A 感度", 5, 50, 20); bright_a = st.slider("A 輝度", 0, 255, 60)
             current_params_dict.update({"CH-A": target_a, "感度A": sens_a, "輝度A": bright_a, "CH-B": target_b, "感度B": sens_b, "輝度B": bright_b})
         else:
             # トレンド解析（面積）の時もROI正規化を使えるようにする
@@ -229,83 +245,27 @@ with st.sidebar:
                 current_params_dict.update({"ROI色": roi_color, "ROI感度": sens_roi, "ROI輝度": bright_roi})
 
         # ---------------------------------------------------------
-# [追加] 色名から表示チャンネル(R,G,B)を自動判定する関数
-# ---------------------------------------------------------
-def get_channel_index(color_name):
-    # 赤系キーワードが含まれていれば R(0) チャンネル
-    if any(k in color_name for k in ["赤", "エオジン", "茶色"]):
-        return 0 
-    # 緑系なら G(1)
-    elif "緑" in color_name:
-        return 1
-    # 青系なら B(2)
-    elif any(k in color_name for k in ["青", "ヘマトキシリン"]):
-        return 2
-    return 1 # デフォルトは緑
-
-# ---------------------------------------------------------
-# [追加] 色名から表示チャンネル(R,G,B)を自動判定する関数
-# ---------------------------------------------------------
-def get_channel_index(color_name):
-    # 赤系キーワードが含まれていれば R(0) チャンネル
-    if any(k in color_name for k in ["赤", "エオジン", "茶色"]):
-        return 0 
-    # 緑系なら G(1)
-    elif "緑" in color_name:
-        return 1
-    # 青系なら B(2)
-    elif any(k in color_name for k in ["青", "ヘマトキシリン"]):
-        return 2
-    return 1 # デフォルトは緑
-
-# ---------------------------------------------------------
-# [修正] Mode 3 (共局在解析) のブロック全体
-# ---------------------------------------------------------
-elif mode.startswith("3.") or (mode.startswith("5.") and trend_metric.startswith("共局在")):
-    st.info("💡 設定ガイド: **CH-B (基準)** の領域内で、**CH-A (対象)** がどれだけ重なっているかを計算します。")
-    
-    c1, c2 = st.columns(2)
-    with c1:
-        # ラベルを汎用的に変更
-        target_b = st.selectbox("CH-B (基準/分母):", list(COLOR_MAP.keys()), index=3) # デフォルト青
-        sens_b = st.slider("B 感度 (基準エリア)", 5, 50, 20)
-        bright_b = st.slider("B 輝度", 0, 255, 60)
-    with c2:
-        target_a = st.selectbox("CH-A (対象/分子):", list(COLOR_MAP.keys()), index=1) # デフォルト緑
-        sens_a = st.slider("A 感度 (重なり判定)", 5, 50, 20)
-        bright_a = st.slider("A 輝度", 0, 255, 60)
-    
-    # パラメータ保存
-    current_params_dict.update({
-        "CH-A(対象)": target_a, "感度A": sens_a, "輝度A": bright_a,
-        "CH-B(基準)": target_b, "感度B": sens_b, "輝度B": bright_b
-    })
-
-    # マスク生成
-    mask_a = get_mask(img_hsv, target_a, sens_a, bright_a) # 分子
-    mask_b = get_mask(img_hsv, target_b, sens_b, bright_b) # 分母
-
-    # 共局在計算 (常に CH-B を分母とする)
-    denom = cv2.countNonZero(mask_b)
-    coloc = cv2.bitwise_and(mask_a, mask_b)
-    val = (cv2.countNonZero(coloc) / denom * 100) if denom > 0 else 0
-    unit = "% Coloc"
-
-    # --- [核心] ダイナミック表示生成ロジック ---
-    # 真っ黒な画像を用意 (R, G, B)
-    disp_channels = [np.zeros_like(mask_a), np.zeros_like(mask_a), np.zeros_like(mask_a)]
-    
-    # 選ばれた色名に基づいて、マスクを正しいチャンネルに投入
-    idx_a = get_channel_index(target_a)
-    idx_b = get_channel_index(target_b)
-    
-    # 加算合成 (同じ色が選ばれても大丈夫なように bitwise_or を使用)
-    disp_channels[idx_a] = cv2.bitwise_or(disp_channels[idx_a], mask_a)
-    disp_channels[idx_b] = cv2.bitwise_or(disp_channels[idx_b], mask_b)
-
-    # Streamlit用のRGB画像としてマージ
-    # disp_channels[0]=R, [1]=G, [2]=B
-    res_disp = cv2.merge(disp_channels)
+        # [修正] Mode 3 (共局在解析) - 汎用化UI
+        # ---------------------------------------------------------
+        elif mode.startswith("3."):
+            st.info("💡 設定ガイド: **CH-B (基準/分母)** の領域内で、**CH-A (対象/分子)** がどれだけ重なっているかを計算します。")
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                # ラベルを汎用的に変更
+                target_b = st.selectbox("CH-B (基準/分母):", list(COLOR_MAP.keys()), index=3) # デフォルト青
+                sens_b = st.slider("B 感度 (基準エリア)", 5, 50, 20)
+                bright_b = st.slider("B 輝度", 0, 255, 60)
+            with c2:
+                target_a = st.selectbox("CH-A (対象/分子):", list(COLOR_MAP.keys()), index=1) # デフォルト緑
+                sens_a = st.slider("A 感度 (重なり判定)", 5, 50, 20)
+                bright_a = st.slider("A 輝度", 0, 255, 60)
+            
+            # パラメータ保存
+            current_params_dict.update({
+                "CH-A(対象)": target_a, "感度A": sens_a, "輝度A": bright_a,
+                "CH-B(基準)": target_b, "感度B": sens_b, "輝度B": bright_b
+            })
 
         elif mode.startswith("4."):
             target_a = st.selectbox("起点 A:", list(COLOR_MAP.keys()), index=2); target_b = st.selectbox("対象 B:", list(COLOR_MAP.keys()), index=3)
@@ -313,7 +273,6 @@ elif mode.startswith("3.") or (mode.startswith("5.") and trend_metric.startswith
             current_params_dict.update({"起点A": target_a, "対象B": target_b, "共通感度": sens_common, "共通輝度": bright_common})
 
     st.divider()
-    # 空間スケールを計算値 3.0769 に設定 (デフォルト)
     scale_val = st.number_input("空間スケール (μm/px)", value=3.0769, format="%.4f")
     current_params_dict["空間スケール"] = scale_val
     current_params_dict["解析モード"] = mode
@@ -359,7 +318,6 @@ with tab_main:
         batch_results = []
         for i, file in enumerate(uploaded_files):
             file.seek(0); file_bytes = np.asarray(bytearray(file.read()), dtype=np.uint8)
-            # 16-bit 対応: IMREAD_UNCHANGEDで読み込み
             img_raw = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
             
             if img_raw is not None:
@@ -370,7 +328,7 @@ with tab_main:
                 else:
                     current_group_label = sample_group
 
-                # 画像処理プロセス (Min-Max Normalizationで8bit化)
+                # 画像処理プロセス
                 img_f = img_raw.astype(np.float32); mn, mx = np.min(img_f), np.max(img_f)
                 img_8 = ((img_f - mn) / (mx - mn) * 255.0 if mx > mn else np.clip(img_f, 0, 255)).astype(np.uint8)
                 img_bgr = cv2.cvtColor(img_8, cv2.COLOR_GRAY2BGR) if len(img_8.shape) == 2 else img_8[:,:,:3]
@@ -380,44 +338,29 @@ with tab_main:
 
                 extra_data = {}
 
-                # --- 面積占有率モード (ROI正規化対応) ---
+                # --- 面積占有率モード ---
                 if mode.startswith("1.") or (mode.startswith("5.") and trend_metric.startswith("面積")):
                     mask_target = get_mask(img_hsv, target_a, sens_a, bright_a)
-                    
-                    a_denominator_px = h * w
-                    roi_status = "Field of View"
-                    final_mask = mask_target
+                    a_den_px = h * w; roi_status = "Field of View"; final_mask = mask_target
                     
                     if 'use_roi_norm' in locals() and use_roi_norm:
                         mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
-                        # 組織内部にある抽出色のみをカウント
                         final_mask = cv2.bitwise_and(mask_target, mask_roi)
-                        a_denominator_px = cv2.countNonZero(mask_roi)
-                        roi_status = "Inside ROI"
-                        # ROIの外郭を赤線で描画
+                        a_den_px = cv2.countNonZero(mask_roi); roi_status = "Inside ROI"
                         cv2.drawContours(res_disp, cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], -1, (255,0,0), 3)
 
                     target_px = cv2.countNonZero(final_mask)
-                    val = (target_px / a_denominator_px * 100) if a_denominator_px > 0 else 0
+                    val = (target_px / a_den_px * 100) if a_den_px > 0 else 0
                     unit = "% Area"
                     
-                    # 緑色で抽出範囲を表示
-                    res_disp_mask = cv2.cvtColor(final_mask, cv2.COLOR_GRAY2RGB)
-                    res_disp_mask[:,:,0]=0; res_disp_mask[:,:,2]=0
+                    res_disp_mask = cv2.cvtColor(final_mask, cv2.COLOR_GRAY2RGB); res_disp_mask[:,:,0]=0; res_disp_mask[:,:,2]=0
                     res_disp = cv2.addWeighted(res_disp, 0.7, res_disp_mask, 0.3, 0)
                     
-                    a_target_mm2 = a_denominator_px * ((scale_val/1000)**2)
-                    extra_data = {
-                        "対象面積(mm2)": round(a_target_mm2, 6),
-                        "正規化基準": roi_status
-                    }
+                    extra_data = {"対象面積(mm2)": round(a_den_px * ((scale_val/1000)**2), 6), "正規化基準": roi_status}
 
-                # --- 細胞核カウントモード (ROI正規化 & 色指定対応) ---
+                # --- 細胞核カウントモード ---
                 elif mode.startswith("2."):
-                    # 改良ポイント：指定された色のマスクを使用して核を抽出（HE・免疫染色対応）
                     mask_nuclei = get_mask(img_hsv, target_a, sens_a, bright_a)
-                    
-                    # 核の分離を良くするモルフォロジー演算
                     kernel = np.ones((3,3), np.uint8)
                     mask_nuclei = cv2.morphologyEx(mask_nuclei, cv2.MORPH_OPEN, kernel)
                     
@@ -425,47 +368,46 @@ with tab_main:
                     valid = [c for c in cnts if cv2.contourArea(c) > min_size]; val, unit = len(valid), "cells"
                     cv2.drawContours(res_disp, valid, -1, (0,255,0), 2)
                     
-                    a_target_mm2 = fov_mm2
-                    roi_status = "Field of View"
-                    
+                    a_target_mm2 = fov_mm2; roi_status = "Field of View"
                     if 'use_roi_norm' in locals() and use_roi_norm:
                         mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
-                        roi_px = cv2.countNonZero(mask_roi)
-                        a_target_mm2 = roi_px * ((scale_val/1000)**2)
+                        a_target_mm2 = cv2.countNonZero(mask_roi) * ((scale_val/1000)**2)
                         roi_status = "Inside ROI"
-                        # ROIの外郭を赤線で描画
                         cv2.drawContours(res_disp, cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], -1, (255,0,0), 3)
 
                     density = val / a_target_mm2 if a_target_mm2 > 0 else 0
-                    extra_data = {
-                        "対象面積(mm2)": round(a_target_mm2, 6),
-                        "密度(cells/mm2)": round(density, 2),
-                        "正規化基準": roi_status
-                    }
+                    extra_data = {"対象面積(mm2)": round(a_target_mm2, 6), "密度(cells/mm2)": round(density, 2), "正規化基準": roi_status}
 
-                # --- その他のモード ---
+                # --- [修正] 共局在モード ---
                 elif mode.startswith("3.") or (mode.startswith("5.") and trend_metric.startswith("共局在")):
                     mask_a = get_mask(img_hsv, target_a, sens_a, bright_a)
                     mask_b = get_mask(img_hsv, target_b, sens_b, bright_b)
-    
-                    # 共局在計算
+
+                    # 共局在計算 (常に CH-B を分母とする)
+                    denom = cv2.countNonZero(mask_b)
                     coloc = cv2.bitwise_and(mask_a, mask_b)
-                    denom = cv2.countNonZero(mask_a)
                     val = (cv2.countNonZero(coloc) / denom * 100) if denom > 0 else 0
                     unit = "% Coloc"
 
-                    # StreamlitはRGB順。OpenCVのmerge(B, G, R)を、(R, G, B)の並びに直す
-                    # 今回は CH-Aを緑、CH-Bを青として扱うことで、重なりをシアン(水色)にする
-                    black = np.zeros_like(mask_a)
-    
-                    # mask_a(CH-A)を緑、mask_b(CH-B)を青、赤は0
-                    res_disp = cv2.merge([black, mask_a, mask_b])
+                    # --- [核心] ダイナミック表示生成ロジック ---
+                    disp_channels = [np.zeros_like(mask_a), np.zeros_like(mask_a), np.zeros_like(mask_a)]
+                    
+                    # 選ばれた色名に基づいて、マスクを正しいチャンネルに投入
+                    idx_a = get_channel_index(target_a)
+                    idx_b = get_channel_index(target_b)
+                    
+                    # 加算合成
+                    disp_channels[idx_a] = cv2.bitwise_or(disp_channels[idx_a], mask_a)
+                    disp_channels[idx_b] = cv2.bitwise_or(disp_channels[idx_b], mask_b)
+
+                    # Streamlit用のRGB画像としてマージ
+                    res_disp = cv2.merge(disp_channels)
 
                 elif mode.startswith("4."):
                     ma, mb = get_mask(img_hsv, target_a, sens_common, bright_common), get_mask(img_hsv, target_b, sens_common, bright_common)
                     pa, pb = get_centroids(ma), get_centroids(mb)
                     if pa and pb: val = np.mean([np.min([np.linalg.norm(a - b) for b in pb]) for a in pa]) * (scale_val if scale_val > 0 else 1)
-                    unit = "μm Dist" if scale_val > 0 else "px Dist"; res_disp = cv2.addWeighted(img_rgb, 0.6, cv2.merge([ma, mb, np.zeros_like(ma)]), 0.4, 0)
+                    unit = "μm Dist"; res_disp = cv2.addWeighted(img_rgb, 0.6, cv2.merge([ma, mb, np.zeros_like(ma)]), 0.4, 0)
 
                 st.divider()
                 st.markdown(f"### 📷 画像 {i+1}: {file.name}")
@@ -516,7 +458,7 @@ with tab_main:
         st.download_button("📥 結果CSVをダウンロード", df_exp.to_csv(index=False).encode('utf-8-sig'), utc_filename)
 
 # ---------------------------------------------------------
-# 5. タブ2: 性能バリデーション
+# 5. タブ2: 性能バリデーション (復元版)
 # ---------------------------------------------------------
 with tab_val:
     st.header("🏆 性能バリデーションサマリー")
@@ -582,4 +524,4 @@ with tab_val:
         }))
         st.info("💡 **総合結論:** W1（核）は全密度領域で高精度を維持。W2（細胞質）は過小・過剰評価の変動が激しく、科学的に定量解析には推奨されません。")
     else:
-        st.error("バリデーション用CSVファイルが見てかりません。リポジトリのルートに配置してください。")
+        st.error("Validation CSV missing. ルートディレクトリに 'quantified_data_*.csv' を配置してください。")
