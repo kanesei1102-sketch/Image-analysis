@@ -9,12 +9,12 @@ import re
 import uuid
 
 # ---------------------------------------------------------
-# 0. Page Config & Constants
+# 0. ページ設定 & 定数
 # ---------------------------------------------------------
-st.set_page_config(page_title="Bio-Image Quantifier V2 (EN)", layout="wide")
+st.set_page_config(page_title="Bio-Image Quantifier V2 (JP)", layout="wide")
 
-# Version Management
-SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.02 (EN/Auto-Group)"
+# バージョン管理
+SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.02 (JP/Auto-Group)"
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = str(uuid.uuid4())
@@ -22,24 +22,31 @@ if 'uploader_key' not in st.session_state:
 if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
-# --- Analysis ID Management (Human-readable + Unique ID) ---
+# --- 解析ID管理 (人間が読める形式 + ユニークID) ---
 if "current_analysis_id" not in st.session_state:
     date_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d')
     unique_suffix = str(uuid.uuid4())[:8]
     st.session_state.current_analysis_id = f"AID-{date_str}-{unique_suffix}"
 
 # ---------------------------------------------------------
-# 1. Image Processing Engine
+# 1. 画像処理エンジン (HE染色対応版)
 # ---------------------------------------------------------
 COLOR_MAP = {
-    "Brown (DAB)": {"lower": np.array([10, 50, 20]), "upper": np.array([30, 255, 255])},
-    "Green (GFP)": {"lower": np.array([35, 50, 50]), "upper": np.array([85, 255, 255])},
-    "Red (RFP)": {"lower": np.array([0, 50, 50]), "upper": np.array([10, 255, 255])},
-    "Blue (DAPI)": {"lower": np.array([100, 50, 50]), "upper": np.array([140, 255, 255])}
+    # 既存の蛍光・免疫染色設定
+    "茶色 (DAB)": {"lower": np.array([10, 50, 20]), "upper": np.array([30, 255, 255])},
+    "緑色 (GFP)": {"lower": np.array([35, 50, 50]), "upper": np.array([85, 255, 255])},
+    "赤色 (RFP)": {"lower": np.array([0, 50, 50]), "upper": np.array([10, 255, 255])},
+    "青色 (DAPI)": {"lower": np.array([100, 50, 50]), "upper": np.array([140, 255, 255])},
+    
+    # --- 追加: HE染色 (明視野) サポート ---
+    # ヘマトキシリン (細胞核): 紫〜青, 暗い
+    "ヘマトキシリン (Nuclei)": {"lower": np.array([110, 50, 50]), "upper": np.array([170, 255, 200])},
+    # エオジン (細胞質): ピンク〜赤, 明るめ
+    "エオジン (Cytoplasm)": {"lower": np.array([140, 20, 100]), "upper": np.array([180, 255, 255])}
 }
 
 def get_mask(hsv_img, color_name, sens, bright_min):
-    if color_name == "Red (RFP)":
+    if color_name == "赤色 (RFP)":
         lower1 = np.array([0, 30, bright_min]); upper1 = np.array([10 + sens//2, 255, 255])
         lower2 = np.array([170 - sens//2, 30, bright_min]); upper2 = np.array([180, 255, 255])
         return cv2.inRange(hsv_img, lower1, upper1) | cv2.inRange(hsv_img, lower2, upper2)
@@ -67,7 +74,7 @@ def get_centroids(mask):
     return pts
 
 # ---------------------------------------------------------
-# 2. Validation Data Loading
+# 2. バリデーションデータ読み込み
 # ---------------------------------------------------------
 @st.cache_data
 def load_validation_data():
@@ -91,119 +98,121 @@ def load_validation_data():
 df_val = load_validation_data()
 
 # ---------------------------------------------------------
-# 3. UI Framework & Sidebar
+# 3. UIフレームワーク & サイドバー
 # ---------------------------------------------------------
-st.title("🔬 Bio-Image Quantifier: Pro Edition (English)")
-st.caption(f"{SOFTWARE_VERSION}: Industrial-Grade Image Analysis & Data Extraction")
+st.title("🔬 Bio-Image Quantifier: Pro Edition (日本語版)")
+st.caption(f"{SOFTWARE_VERSION}: 産業グレード画像解析・データ抽出")
 
-st.sidebar.markdown(f"**Current Analysis ID:** `{st.session_state.current_analysis_id}`")
+st.sidebar.markdown(f"**現在の解析ID:** `{st.session_state.current_analysis_id}`")
 
-tab_main, tab_val = st.tabs(["🚀 Run Analysis", "🏆 Performance Validation"])
+tab_main, tab_val = st.tabs(["🚀 解析実行", "🏆 性能バリデーション"])
 
 with st.sidebar:
-    st.markdown("### [Important: Use in Papers/Presentations]")
+    st.markdown("### 【重要：論文・学会発表での使用】")
     st.warning("""
-    **Planning to publish research results?**
-    This tool is in beta. For academic use, **please contact the developer (Kaneko) in advance.**
-    We can discuss co-authorship or acknowledgments.
-    👉 **[Contact Form](https://forms.gle/xgNscMi3KFfWcuZ1A)**
+    **研究成果として公表される予定ですか？**
+    本ツールはベータ版です。学術利用の際は**必ず事前に開発者（金子）までご連絡ください。**
+    共著や謝辞についてご相談させていただきます。
+    👉 **[連絡フォーム](https://forms.gle/xgNscMi3KFfWcuZ1A)**
     """)
     st.divider()
 
-    st.header("Analysis Recipe")
-    mode_raw = st.selectbox("Select Analysis Mode:", [
-        "1. Area Occupancy %", 
-        "2. Nuclei Count / Density", 
-        "3. Colocalization Analysis", 
-        "4. Spatial Distance Analysis", 
-        "5. Ratio Trend Analysis"
+    st.header("解析レシピ")
+    mode_raw = st.selectbox("解析モード選択:", [
+        "1. 面積占有率 (%)", 
+        "2. 細胞核カウント / 密度", 
+        "3. 共局在解析 (Colocalization)", 
+        "4. 空間距離解析", 
+        "5. トレンド変化解析"
     ])
     mode = mode_raw 
 
     st.divider()
 
-    # --- Grouping Strategy ---
-    st.markdown("### 🏷️ Grouping Settings")
-    group_strategy = st.radio("Label Determination:", ["Manual Entry", "Auto from Filename"], 
-                              help="Auto: Extracts the part before the separator in the filename as the group name")
+    # --- グループ分け戦略 ---
+    st.markdown("### 🏷️ グループ化設定")
+    group_strategy = st.radio("ラベル決定方法:", ["手動入力", "ファイル名から自動抽出"], 
+                              help="自動: ファイル名の区切り文字より前の部分をグループ名として抽出します")
     
-    if group_strategy.startswith("Manual"):
-        sample_group = st.text_input("Group Name (X-axis Label):", value="Control")
+    if group_strategy.startswith("手動"):
+        sample_group = st.text_input("グループ名 (X軸ラベル):", value="Control")
         filename_sep = None
     else:
-        filename_sep = st.text_input("Separator (e.g., _ or - ):", value="_", help="The part before this character becomes the group name")
-        st.info(f"Ex: 'WT{filename_sep}01.tif' → Group: 'WT'")
-        sample_group = "(Auto Detected)" 
+        filename_sep = st.text_input("区切り文字 (例: _ または - ):", value="_", help="この文字より前の文字列をグループ名にします")
+        st.info(f"例: 'WT{filename_sep}01.tif' → グループ: 'WT'")
+        sample_group = "(自動検出)" 
 
     st.divider()
 
-    # Analysis Parameter Settings
+    # 解析パラメータ動的設定
     if mode.startswith("5."):
-        st.markdown("### 🔢 Trend Analysis Conditions")
-        trend_metric = st.radio("Metric Target:", ["Colocalization Rate", "Area Occupancy"])
-        ratio_val = st.number_input("Condition Value:", value=0, step=10)
-        ratio_unit = st.text_input("Unit:", value="%", key="unit")
-        if group_strategy.startswith("Manual"):
+        st.markdown("### 🔢 トレンド解析条件")
+        trend_metric = st.radio("測定指標:", ["共局在率", "面積占有率"])
+        ratio_val = st.number_input("条件値:", value=0, step=10)
+        ratio_unit = st.text_input("単位:", value="%", key="unit")
+        if group_strategy.startswith("手動"):
             sample_group = f"{ratio_val}{ratio_unit}" 
         
-        if trend_metric.startswith("Colocalization"):
+        if trend_metric.startswith("共局在"):
             c1, c2 = st.columns(2)
             with c1:
-                target_a = st.selectbox("CH-A (Reference):", list(COLOR_MAP.keys()), index=3)
-                sens_a = st.slider("A Sensitivity", 5, 50, 20); bright_a = st.slider("A Brightness", 0, 255, 60)
+                target_a = st.selectbox("CH-A (基準):", list(COLOR_MAP.keys()), index=3)
+                sens_a = st.slider("A 感度", 5, 50, 20); bright_a = st.slider("A 輝度", 0, 255, 60)
             with c2:
-                target_b = st.selectbox("CH-B (Target):", list(COLOR_MAP.keys()), index=2)
-                sens_b = st.slider("B Sensitivity", 5, 50, 20); bright_b = st.slider("B Brightness", 0, 255, 60)
+                target_b = st.selectbox("CH-B (対象):", list(COLOR_MAP.keys()), index=2)
+                sens_b = st.slider("B 感度", 5, 50, 20); bright_b = st.slider("B 輝度", 0, 255, 60)
         else:
-            target_a = st.selectbox("Analysis Color:", list(COLOR_MAP.keys()), index=2)
-            sens_a = st.slider("Sensitivity", 5, 50, 20); bright_a = st.slider("Brightness", 0, 255, 60)
-            use_roi_norm = st.checkbox("Normalize by Tissue Area (ROI)", value=False, key="roi_m5")
+            target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys()), index=2)
+            sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
+            # トレンド解析(面積)でもROI正規化を可能に
+            use_roi_norm = st.checkbox("組織面積 (ROI) で正規化", value=False, key="roi_mode5")
             if use_roi_norm:
-                roi_color = st.selectbox("Tissue Color:", list(COLOR_MAP.keys()), index=2, key="roi_c5")
-                sens_roi = st.slider("ROI Sensitivity", 5, 50, 20, key="roi_s5")
-                bright_roi = st.slider("ROI Brightness", 0, 255, 40, key="roi_b5")
+                roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=2, key="roi_col5")
+                sens_roi = st.slider("ROI感度", 5, 50, 20, key="roi_sens5")
+                bright_roi = st.slider("ROI輝度", 0, 255, 40, key="roi_bri5")
     else:
         if mode.startswith("1."):
-            target_a = st.selectbox("Analysis Color:", list(COLOR_MAP.keys()))
-            sens_a = st.slider("Sensitivity", 5, 50, 20)
-            bright_a = st.slider("Brightness", 0, 255, 60)
-            use_roi_norm = st.checkbox("Normalize by Tissue Area (ROI)", value=False, key="roi_m1")
+            target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys()))
+            sens_a = st.slider("感度", 5, 50, 20)
+            bright_a = st.slider("輝度", 0, 255, 60)
+            # 面積占有率でもROI正規化ボタンを追加
+            use_roi_norm = st.checkbox("組織面積 (ROI) で正規化", value=False, key="roi_mode1")
             if use_roi_norm:
-                roi_color = st.selectbox("Tissue Color:", list(COLOR_MAP.keys()), index=2, key="roi_c1")
-                sens_roi = st.slider("ROI Sensitivity", 5, 50, 20, key="roi_s1")
-                bright_roi = st.slider("ROI Brightness", 0, 255, 40, key="roi_b1")
+                roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=2, key="roi_col1")
+                sens_roi = st.slider("ROI感度", 5, 50, 20, key="roi_sens1")
+                bright_roi = st.slider("ROI輝度", 0, 255, 40, key="roi_bri1")
         elif mode.startswith("2."):
-            min_size = st.slider("Min Nuclei Size (px)", 10, 500, 50); bright_count = st.slider("Detection Threshold", 0, 255, 50)
-            use_roi_norm = st.checkbox("Normalize by Tissue Area (ROI)", value=True, key="roi_m2")
+            min_size = st.slider("最小核サイズ (px)", 10, 500, 50); bright_count = st.slider("検出しきい値", 0, 255, 50)
+            use_roi_norm = st.checkbox("組織面積 (ROI) で正規化", value=True, key="roi_mode2")
             if use_roi_norm:
-                roi_color = st.selectbox("Tissue Color:", list(COLOR_MAP.keys()), index=2, key="roi_c2")
-                sens_roi = st.slider("ROI Sensitivity", 5, 50, 20, key="roi_s2")
-                bright_roi = st.slider("ROI Brightness", 0, 255, 40, key="roi_b2")
+                roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=2, key="roi_col2")
+                sens_roi = st.slider("ROI感度", 5, 50, 20, key="roi_sens2")
+                bright_roi = st.slider("ROI輝度", 0, 255, 40, key="roi_bri2")
         elif mode.startswith("3."):
             c1, c2 = st.columns(2)
             with c1:
-                target_a = st.selectbox("CH-A:", list(COLOR_MAP.keys()), index=3); sens_a = st.slider("A Sensitivity", 5, 50, 20); bright_a = st.slider("A Brightness", 0, 255, 60)
+                target_a = st.selectbox("CH-A:", list(COLOR_MAP.keys()), index=3); sens_a = st.slider("A 感度", 5, 50, 20); bright_a = st.slider("A 輝度", 0, 255, 60)
             with c2:
-                target_b = st.selectbox("CH-B:", list(COLOR_MAP.keys()), index=2); sens_b = st.slider("B Sensitivity", 5, 50, 20); bright_b = st.slider("B Brightness", 0, 255, 60)
+                target_b = st.selectbox("CH-B:", list(COLOR_MAP.keys()), index=2); sens_b = st.slider("B 感度", 5, 50, 20); bright_b = st.slider("B 輝度", 0, 255, 60)
         elif mode.startswith("4."):
-            target_a = st.selectbox("Origin A:", list(COLOR_MAP.keys()), index=2); target_b = st.selectbox("Target B:", list(COLOR_MAP.keys()), index=3)
-            sens_common = st.slider("Common Sensitivity", 5, 50, 20); bright_common = st.slider("Common Brightness", 0, 255, 60)
+            target_a = st.selectbox("起点 A:", list(COLOR_MAP.keys()), index=2); target_b = st.selectbox("対象 B:", list(COLOR_MAP.keys()), index=3)
+            sens_common = st.slider("共通感度", 5, 50, 20); bright_common = st.slider("共通輝度", 0, 255, 60)
 
     st.divider()
-    scale_val = st.number_input("Spatial Scale (μm/px)", value=1.5267, format="%.4f")
-    st.markdown("### 🔄 Sequential Analysis")
+    scale_val = st.number_input("空間スケール (μm/px)", value=1.5267, format="%.4f")
+    st.markdown("### 🔄 連続解析")
     
     def prepare_next_group():
         st.session_state.uploader_key = str(uuid.uuid4())
 
     st.button(
-        "📸 Next Group (Clear Images Only)", 
+        "📸 次のグループへ (画像のみクリア)", 
         on_click=prepare_next_group, 
-        help="Keeps current analysis history but clears uploaded images to prepare for the next group"
+        help="現在の解析履歴を保持したまま、アップロードされた画像のみをクリアして次の群の準備をします"
     )
     
     st.divider()
-    if st.button("Clear History & Generate New ID"): 
+    if st.button("履歴クリア & 新規ID発行"): 
         st.session_state.analysis_history = []
         date_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d')
         st.session_state.current_analysis_id = f"AID-{date_str}-{str(uuid.uuid4())[:8]}"
@@ -211,74 +220,73 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    st.markdown("### ⚙️ Audit Trail (Param Log)")
+    st.markdown("### ⚙️ 監査証跡 (パラメータログ)")
     
     current_params = {
-        "Software_Version": SOFTWARE_VERSION, 
-        "Analysis_ID": st.session_state.current_analysis_id,
-        "Analysis_Date_UTC": datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
-        "Mode": mode,
-        "Scale_um_px": scale_val,
-        "Grouping_Strategy": group_strategy
+        "ソフトウェア・バージョン": SOFTWARE_VERSION, 
+        "解析ID": st.session_state.current_analysis_id,
+        "解析日時_UTC": datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+        "モード": mode,
+        "空間スケール_um_px": scale_val,
+        "グループ化戦略": group_strategy
     }
-    if group_strategy.startswith("Manual"): current_params["Manual_Group_Label"] = sample_group
-    else: current_params["Filename_Separator"] = filename_sep
+    if group_strategy.startswith("手動"): current_params["手動グループラベル"] = sample_group
+    else: current_params["ファイル名区切り文字"] = filename_sep
 
-    # (Logging other parameters)
-    if "trend_metric" in locals(): current_params["Trend_Metric"] = trend_metric
-    if "target_a" in locals(): current_params["Target_A"] = target_a
-    if "target_b" in locals(): current_params["Target_B"] = target_b
-    if "roi_color" in locals(): current_params["ROI_Color"] = roi_color
-    if "sens_a" in locals(): current_params["Sens_A"] = sens_a
-    if "bright_a" in locals(): current_params["Bright_A"] = bright_a
-    if "sens_b" in locals(): current_params["Sens_B"] = sens_b
-    if "bright_b" in locals(): current_params["Bright_B"] = bright_b
-    if "min_size" in locals(): current_params["Min_Nuclei_Size_px"] = min_size
-    if "bright_count" in locals(): current_params["Count_Threshold"] = bright_count
-    if "use_roi_norm" in locals(): current_params["ROI_Normalization_Enabled"] = use_roi_norm
-    if "sens_roi" in locals(): current_params["ROI_Sens"] = sens_roi
-    if "bright_roi" in locals(): current_params["ROI_Bright"] = bright_roi
-    if "sens_common" in locals(): current_params["Common_Sens"] = sens_common
-    if "bright_common" in locals(): current_params["Common_Bright"] = bright_common
+    # 他のパラメータも記録
+    if "trend_metric" in locals(): current_params["トレンド指標"] = trend_metric
+    if "target_a" in locals(): current_params["対象A"] = target_a
+    if "target_b" in locals(): current_params["対象B"] = target_b
+    if "roi_color" in locals(): current_params["ROI色"] = roi_color
+    if "sens_a" in locals(): current_params["感度A"] = sens_a
+    if "bright_a" in locals(): current_params["輝度A"] = bright_a
+    if "sens_b" in locals(): current_params["感度B"] = sens_b
+    if "bright_b" in locals(): current_params["輝度B"] = bright_b
+    if "min_size" in locals(): current_params["最小核サイズ_px"] = min_size
+    if "bright_count" in locals(): current_params["検出閾値"] = bright_count
+    if "use_roi_norm" in locals(): current_params["ROI正規化有効"] = use_roi_norm
+    if "sens_roi" in locals(): current_params["ROI感度"] = sens_roi
+    if "bright_roi" in locals(): current_params["ROI輝度"] = bright_roi
+    if "sens_common" in locals(): current_params["共通感度"] = sens_common
+    if "bright_common" in locals(): current_params["共通輝度"] = bright_common
 
     df_params = pd.DataFrame([current_params]).T.reset_index()
-    df_params.columns = ["Parameter", "Setting Value"]
+    df_params.columns = ["パラメータ名", "設定値"]
     param_filename = f"params_{st.session_state.current_analysis_id}.csv"
 
-    # -------------------------------------------------------------------------
-    # Dynamic Parameter Capture (Only save relevant params based on Mode)
-    # -------------------------------------------------------------------------
+    # アクティブな設定値のテーブル表示用
     current_active_params = {
-        "Mode": mode,
-        "Scale_um_px": scale_val,
-        "ROI_Norm": use_roi_norm if 'use_roi_norm' in locals() else False
+        "解析モード": mode,
+        "空間スケール": scale_val,
+        "ROI正規化": use_roi_norm if 'use_roi_norm' in locals() else False
     }
 
     st.divider()
-    st.markdown("### ⚙️ Traceability (Active Settings)")
+    st.markdown("### ⚙️ トレーサビリティ (現在設定)")
     st.table(pd.DataFrame([current_active_params]).T)
     
-    st.download_button("📥 Download Settings CSV", df_params.to_csv(index=False).encode('utf-8'), param_filename, "text/csv")
+    st.download_button("📥 設定CSVをダウンロード", df_params.to_csv(index=False).encode('utf-8-sig'), param_filename, "text/csv")
 
     st.divider()
-    st.caption("[Disclaimer]")
-    st.caption("This tool is for research use only and does not guarantee clinical diagnosis. Final validity check is the responsibility of the user.")
+    st.caption("【免責事項】")
+    st.caption("本ツールは研究用であり、臨床診断を保証しません。最終的な妥当性の確認は利用者の責任で行ってください。")
 
 # ---------------------------------------------------------
-# 4. Tab 1: Run Analysis
+# 4. タブ1: 解析実行
 # ---------------------------------------------------------
 with tab_main:
-    uploaded_files = st.file_uploader("Upload Images (16-bit TIFF supported)", type=["jpg", "png", "tif", "tiff"], accept_multiple_files=True, key=st.session_state.uploader_key)
+    uploaded_files = st.file_uploader("画像をアップロード (16-bit TIFF対応)", type=["jpg", "png", "tif", "tiff"], accept_multiple_files=True, key=st.session_state.uploader_key)
     if uploaded_files:
-        st.success(f"Analyzing {len(uploaded_files)} images...")
+        st.success(f"{len(uploaded_files)} 枚の画像を解析しています...")
         batch_results = []
         for i, file in enumerate(uploaded_files):
             file.seek(0); file_bytes = np.asarray(bytearray(file.read()), dtype=np.uint8)
-            # 16-bit support: IMREAD_UNCHANGED
+            # 16-bit 対応: IMREAD_UNCHANGEDで読み込み
             img_raw = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
+            
             if img_raw is not None:
-                # --- Auto Grouping Logic ---
-                if group_strategy.startswith("Auto"):
+                # --- 自動グループ化ロジック ---
+                if group_strategy.startswith("ファイル名"):
                     try:
                         detected_group = file.name.split(filename_sep)[0]
                     except:
@@ -287,7 +295,7 @@ with tab_main:
                 else:
                     current_group_label = sample_group
 
-                # Image Processing (Normalization for display/calc)
+                # 画像処理プロセス (Min-Max Normalizationで8bit化)
                 img_f = img_raw.astype(np.float32); mn, mx = np.min(img_f), np.max(img_f)
                 img_8 = ((img_f - mn) / (mx - mn) * 255.0 if mx > mn else np.clip(img_f, 0, 255)).astype(np.uint8)
                 img_bgr = cv2.cvtColor(img_8, cv2.COLOR_GRAY2BGR) if len(img_8.shape) == 2 else img_8[:,:,:3]
@@ -297,36 +305,39 @@ with tab_main:
 
                 extra_data = {}
 
-                # --- Mode 1: Area Occupancy (With ROI Support) ---
-                if mode.startswith("1.") or (mode.startswith("5.") and trend_metric.startswith("Area")):
+                # --- 面積占有率モード (ROI正規化対応) ---
+                if mode.startswith("1.") or (mode.startswith("5.") and trend_metric.startswith("面積")):
                     mask_target = get_mask(img_hsv, target_a, sens_a, bright_a)
-                    a_den_px = h * w
+                    
+                    a_denominator_px = h * w
                     roi_status = "Field of View"
                     final_mask = mask_target
                     
                     if use_roi_norm:
                         mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
-                        # Exclude noise outside ROI
+                        # 組織内部にある抽出色のみをカウント
                         final_mask = cv2.bitwise_and(mask_target, mask_roi)
-                        a_den_px = cv2.countNonZero(mask_roi)
+                        a_denominator_px = cv2.countNonZero(mask_roi)
                         roi_status = "Inside ROI"
-                        # Draw ROI contour
+                        # ROIの外郭を赤線で描画
                         cv2.drawContours(res_disp, cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], -1, (255,0,0), 3)
 
-                    val = (cv2.countNonZero(final_mask) / a_den_px * 100) if a_den_px > 0 else 0
+                    target_px = cv2.countNonZero(final_mask)
+                    val = (target_px / a_denominator_px * 100) if a_denominator_px > 0 else 0
                     unit = "% Area"
                     
-                    # Highlight mask in Green
-                    m_disp = cv2.cvtColor(final_mask, cv2.COLOR_GRAY2RGB); m_disp[:,:,0]=0; m_disp[:,:,2]=0
-                    res_disp = cv2.addWeighted(res_disp, 0.7, m_disp, 0.3, 0)
+                    # 緑色で抽出範囲を表示
+                    res_disp_mask = cv2.cvtColor(final_mask, cv2.COLOR_GRAY2RGB)
+                    res_disp_mask[:,:,0]=0; res_disp_mask[:,:,2]=0
+                    res_disp = cv2.addWeighted(res_disp, 0.7, res_disp_mask, 0.3, 0)
                     
-                    a_den_mm2 = a_den_px * ((scale_val/1000)**2)
+                    a_target_mm2 = a_denominator_px * ((scale_val/1000)**2)
                     extra_data = {
-                        "Target Area (mm2)": round(a_den_mm2, 6),
-                        "Normalization Basis": roi_status
+                        "対象面積(mm2)": round(a_target_mm2, 6),
+                        "正規化基準": roi_status
                     }
 
-                # --- Mode 2: Nuclei Count (With ROI Support) ---
+                # --- 細胞核カウントモード (ROI正規化対応) ---
                 elif mode.startswith("2."):
                     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY); _, th = cv2.threshold(gray, bright_count, 255, cv2.THRESH_BINARY)
                     blur = cv2.GaussianBlur(gray, (5,5), 0); _, otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
@@ -334,27 +345,28 @@ with tab_main:
                     valid = [c for c in cnts if cv2.contourArea(c) > min_size]; val, unit = len(valid), "cells"
                     cv2.drawContours(res_disp, valid, -1, (0,255,0), 2)
                     
-                    a_den_mm2 = fov_mm2; roi_status = "Field of View"
+                    a_target_mm2 = fov_mm2
+                    roi_status = "Field of View"
+                    
                     if use_roi_norm:
                         mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
-                        a_den_mm2 = cv2.countNonZero(mask_roi) * ((scale_val/1000)**2)
+                        roi_px = cv2.countNonZero(mask_roi)
+                        a_target_mm2 = roi_px * ((scale_val/1000)**2)
                         roi_status = "Inside ROI"
-                        # Draw ROI contour
                         cv2.drawContours(res_disp, cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], -1, (255,0,0), 3)
 
-                    density = val / a_den_mm2 if a_den_mm2 > 0 else 0
+                    density = val / a_target_mm2 if a_target_mm2 > 0 else 0
                     extra_data = {
-                        "Target Area (mm2)": round(a_den_mm2, 6),
-                        "Density (cells/mm2)": round(density, 2),
-                        "Normalization Basis": roi_status
+                        "対象面積(mm2)": round(a_target_mm2, 6),
+                        "密度(cells/mm2)": round(density, 2),
+                        "正規化基準": roi_status
                     }
 
-                # --- Other Modes ---
-                elif mode.startswith("3.") or (mode.startswith("5.") and trend_metric.startswith("Colocalization")):
+                # --- その他のモード ---
+                elif mode.startswith("3.") or (mode.startswith("5.") and trend_metric.startswith("共局在")):
                     mask_a = get_mask(img_hsv, target_a, sens_a, bright_a); mask_b = get_mask(img_hsv, target_b, sens_b, bright_b)
                     coloc = cv2.bitwise_and(mask_a, mask_b); denom = cv2.countNonZero(mask_a)
                     val = (cv2.countNonZero(coloc) / denom * 100) if denom > 0 else 0; unit = "% Coloc"; res_disp = cv2.merge([mask_b, mask_a, np.zeros_like(mask_a)])
-                
                 elif mode.startswith("4."):
                     ma, mb = get_mask(img_hsv, target_a, sens_common, bright_common), get_mask(img_hsv, target_b, sens_common, bright_common)
                     pa, pb = get_centroids(ma), get_centroids(mb)
@@ -362,84 +374,75 @@ with tab_main:
                     unit = "μm Dist" if scale_val > 0 else "px Dist"; res_disp = cv2.addWeighted(img_rgb, 0.6, cv2.merge([ma, mb, np.zeros_like(ma)]), 0.4, 0)
 
                 st.divider()
-                st.markdown(f"### 📷 Image {i+1}: {file.name}")
-                st.markdown(f"**Detected Group:** `{current_group_label}`")
+                st.markdown(f"### 📷 画像 {i+1}: {file.name}")
+                st.markdown(f"**検出グループ:** `{current_group_label}`")
                 
-                if "Density (cells/mm2)" in extra_data:
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Count", f"{int(val)} cells")
-                    c2.metric("Density", f"{int(extra_data['Density (cells/mm2)']):,} /mm²")
-                    c3.caption(f"Area: {extra_data['Target Area (mm2)']:.4f} mm² ({extra_data['Normalization Basis']})")
-                elif "Target Area (mm2)" in extra_data:
-                    c1, c2 = st.columns(2)
-                    c1.metric("Occupancy", f"{val:.2f} %")
-                    c2.caption(f"Denominator: {extra_data['Target Area (mm2)']:.4f} mm² ({extra_data['Normalization Basis']})")
+                if "密度(cells/mm2)" in extra_data:
+                    c_m1, c_m2, c_m3 = st.columns(3)
+                    c_m1.metric("カウント数", f"{int(val)} cells")
+                    c_m2.metric("細胞密度", f"{int(extra_data['密度(cells/mm2)']):,} /mm²")
+                    c_m3.caption(f"面積: {extra_data['対象面積(mm2)']:.4f} mm² ({extra_data['正規化基準']})")
+                elif "対象面積(mm2)" in extra_data:
+                    c_m1, c_m2 = st.columns(2)
+                    c_m1.metric("占有率", f"{val:.2f} %")
+                    c_m2.caption(f"分母面積: {extra_data['対象面積(mm2)']:.4f} mm² ({extra_data['正規化基準']})")
                 else:
-                    st.markdown(f"### Result: **{val:.2f} {unit}**")
+                    st.markdown(f"### 解析結果: **{val:.2f} {unit}**")
                 
-                c1, c2 = st.columns(2); c1.image(img_rgb, caption="Raw"); c2.image(res_disp, caption="Analysis Result")
+                c1, c2 = st.columns(2); c1.image(img_rgb, caption="元画像 (Raw)"); c2.image(res_disp, caption="解析結果")
                 
                 row_data = {
-                    "Software_Version": SOFTWARE_VERSION,
-                    "Analysis_ID": st.session_state.current_analysis_id,
-                    "Analysis_Timestamp_UTC": datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
-                    "File Name": file.name,
-                    "Group": current_group_label,
-                    "Value": val,
-                    "Unit": unit,
+                    "ソフトウェア・バージョン": SOFTWARE_VERSION,
+                    "解析ID": st.session_state.current_analysis_id,
+                    "解析日時_UTC": datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+                    "ファイル名": file.name,
+                    "グループ": current_group_label,
+                    "測定値": val,
+                    "単位": unit,
                 }
                 if extra_data: row_data.update(extra_data)
                 row_data.update(current_active_params)
                 batch_results.append(row_data)
         
-        if st.button("Commit Batch Data", type="primary"):
+        if st.button("バッチデータを確定 (Commit)", type="primary"):
             st.session_state.analysis_history.extend(batch_results)
-            st.success("Data added to history. Analysis ID maintained.")
+            st.success("データが履歴に追加されました。解析IDは維持されています。")
             st.rerun()
 
     if st.session_state.analysis_history:
         st.divider()
-        st.header("💾 CSV Export (Full Traceability)")
+        st.header("💾 CSV出力 (完全トレーサビリティ対応)")
         df_exp = pd.DataFrame(st.session_state.analysis_history)
-        
         st.dataframe(df_exp, use_container_width=True)
-        
         utc_filename = f"quantified_data_{st.session_state.current_analysis_id}.csv"
-        st.download_button("📥 Download Results CSV", df_exp.to_csv(index=False).encode('utf-8'), utc_filename)
+        st.download_button("📥 結果CSVをダウンロード", df_exp.to_csv(index=False).encode('utf-8-sig'), utc_filename)
 
 # ---------------------------------------------------------
-# 5. Tab 2: Performance Validation
+# 5. タブ2: 性能バリデーション
 # ---------------------------------------------------------
 with tab_val:
-    st.header("🏆 Performance Validation Summary")
+    st.header("🏆 性能バリデーションサマリー")
     st.markdown("""
-    * **Benchmark:** BBBC005 (Broad Bioimage Benchmark Collection)
-    * **Scale:** 3,200 images (High-Throughput)
-    * **Methodology:** Parameters were individually optimized for each density group to demonstrate maximum performance under proper calibration.
+    * **検証用データセット:** BBBC005 (Broad Bioimage Benchmark Collection)
+    * **検証規模:** 3,200枚 (ハイスループット検証)
+    * **検証手法:** 密度別の各グループに対しパラメータを最適化し、適切なキャリブレーション下での最大性能を実証。
     """)
 
     if not df_val.empty:
         gt_map = {'C14': 14, 'C40': 40, 'C70': 70, 'C100': 100}
-        
-        # Using Focus 1-5 for W1/W2 Comparison
         df_hq = df_val[(df_val['Focus'] >= 1) & (df_val['Focus'] <= 5)]
-        
-        # Statistics (W1 focus)
         w1_hq = df_hq[df_hq['Channel'] == 'W1']
         avg_acc = w1_hq['Accuracy'].mean()
         df_lin = w1_hq.groupby('Ground Truth')['Value'].mean().reset_index()
         r2 = np.corrcoef(df_lin['Ground Truth'], df_lin['Value'])[0, 1]**2
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("Avg Accuracy", f"{avg_acc:.1f}%", help="Focus 1-5 Average")
-        m2.metric("Linearity (R²)", f"{r2:.4f}", help="Based on measured values")
-        m3.metric("Analyzed Images", "3,200+")
+        m1.metric("平均精度 (Accuracy)", f"{avg_acc:.1f}%")
+        m2.metric("線形性 (R²)", f"{r2:.4f}")
+        m3.metric("検証画像数", "3,200+")
 
         st.divider()
-
-        # Graph 1: Linearity (W1 vs W2)
-        st.subheader("📈 1. Counting Performance & Linearity (W1 vs W2)")
-        st.info("💡 **Conclusion:** W1 (Nuclei) shows extremely high linearity, while W2 (Cytoplasm) shows a **V-shaped divergence**, proving it is unsuitable for quantitative analysis.")
+        st.subheader("📈 1. 計数性能と線形性 (W1 vs W2)")
         fig1, ax1 = plt.subplots(figsize=(10, 5))
         ax1.plot([0, 110], [0, 110], 'k--', alpha=0.3, label='Ideal Line')
         ax1.scatter(df_lin['Ground Truth'], df_lin['Value'], color='#1f77b4', s=100, label='W1 (Nuclei)', zorder=5)
@@ -447,44 +450,38 @@ with tab_val:
         ax1.scatter(w2_lin['Ground Truth'], w2_lin['Value'], color='#ff7f0e', s=100, marker='D', label='W2 (Cytoplasm)', zorder=5)
         z = np.polyfit(df_lin['Ground Truth'], df_lin['Value'], 1)
         ax1.plot(df_lin['Ground Truth'], np.poly1d(z)(df_lin['Ground Truth']), '#1f77b4', alpha=0.5, label='W1 Reg')
-        ax1.set_xlabel('Ground Truth'); ax1.set_ylabel('Measured Value'); ax1.legend(); ax1.grid(True, alpha=0.3)
+        ax1.set_xlabel('Ground Truth (理論値)'); ax1.set_ylabel('Measured Value (実測値)'); ax1.legend(); ax1.grid(True, alpha=0.3)
         st.pyplot(fig1)
 
         st.divider()
-
-        # Graph 2 & 3
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("📊 2. Accuracy Comparison by Density")
+            st.subheader("📊 2. 密度別精度比較")
             fig2, ax2 = plt.subplots(figsize=(8, 6))
             df_bar = df_hq.groupby(['Density', 'Channel'])['Accuracy'].mean().reset_index()
             df_bar['Density'] = pd.Categorical(df_bar['Density'], categories=['C14', 'C40', 'C70', 'C100'], ordered=True)
             sns.barplot(data=df_bar, x='Density', y='Accuracy', hue='Channel', palette={'W1': '#1f77b4', 'W2': '#ff7f0e'}, ax=ax2)
-            ax2.axhline(100, color='red', linestyle='--'); ax2.set_ylabel('Accuracy (%)')
+            ax2.axhline(100, color='red', linestyle='--'); ax2.set_ylabel('精度 Accuracy (%)')
             st.pyplot(fig2)
-        
         with c2:
-            st.subheader("📉 3. Optical Robustness (Blur Resistance)")
+            st.subheader("📉 3. 光学的堅牢性 (ボケ耐性)")
             fig3, ax3 = plt.subplots(figsize=(8, 6))
             df_decay = df_val[df_val['Channel'] == 'W1'].copy()
             df_decay['Density'] = pd.Categorical(df_decay['Density'], categories=['C14', 'C40', 'C70', 'C100'], ordered=True)
             sns.lineplot(data=df_decay, x='Focus', y='Accuracy', hue='Density', marker='o', ax=ax3)
-            ax3.axhline(100, color='red', linestyle='--'); ax3.set_ylabel('Accuracy (%)')
+            ax3.axhline(100, color='red', linestyle='--'); ax3.set_ylabel('精度 Accuracy (%)')
             st.pyplot(fig3)
-
         st.divider()
-
-        # Data Table
-        st.subheader("📋 4. Validation Numerical Data")
+        st.subheader("📋 4. バリデーション数値データ")
         summary = df_hq.groupby(['Density', 'Channel'])['Accuracy'].mean().unstack().reset_index()
-        summary['Ground Truth'] = summary['Density'].map(gt_map)
-        summary['W1 Measured'] = (summary['W1']/100)*summary['Ground Truth']
-        summary['W2 Measured'] = (summary['W2']/100)*summary['Ground Truth']
+        summary['理論値'] = summary['Density'].map(gt_map)
+        summary['W1実測'] = (summary['W1']/100)*summary['理論値']
+        summary['W2実測'] = (summary['W2']/100)*summary['理論値']
         summary['Density'] = pd.Categorical(summary['Density'], categories=['C14', 'C40', 'C70', 'C100'], ordered=True)
         summary = summary.sort_values('Density')
-        st.table(summary[['Density', 'Ground Truth', 'W1', 'W1 Measured', 'W2', 'W2 Measured']].rename(columns={
-            'W1': 'W1 Accuracy(%)', 'W1 Measured': 'W1 Avg Count', 'W2': 'W2 Accuracy(%)', 'W2 Measured': 'W2 Avg Count'
+        st.table(summary[['Density', '理論値', 'W1', 'W1実測', 'W2', 'W2実測']].rename(columns={
+            'W1': 'W1 精度(%)', 'W1実測': 'W1 平均カウント', 'W2': 'W2 精度(%)', 'W2実測': 'W2 平均カウント'
         }))
-        st.info("💡 **Overall Conclusion:** W1 (Nuclei) maintains high accuracy across all density ranges. W2 (Cytoplasm) fluctuates heavily between under/overestimation and is not scientifically recommended for quantitative analysis.")
+        st.info("💡 **総合結論:** W1（核）は全密度領域で高精度を維持。W2（細胞質）は過小・過剰評価の変動が激しく、科学的に定量解析には推奨されません。")
     else:
-        st.error("Validation CSV file not found. Please place it in the repository.")
+        st.error("バリデーション用CSVファイルが見てかりません。リポジトリのルートに配置してください。")
