@@ -157,14 +157,29 @@ with st.sidebar:
         else:
             target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys()), index=2)
             sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
+            use_roi_norm = st.checkbox("組織面積 (ROI) で正規化", value=False, key="roi_mode5")
+            if use_roi_norm:
+                roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=2, key="roi_col5")
+                sens_roi = st.slider("ROI感度", 5, 50, 20, key="roi_sens5")
+                bright_roi = st.slider("ROI輝度", 0, 255, 40, key="roi_bri5")
     else:
         if mode.startswith("1."):
-            target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys())); sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
+            target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys()))
+            sens_a = st.slider("感度", 5, 50, 20)
+            bright_a = st.slider("輝度", 0, 255, 60)
+            # 面積占有率でもROI正規化ボタンを追加
+            use_roi_norm = st.checkbox("組織面積 (ROI) で正規化", value=False, key="roi_mode1")
+            if use_roi_norm:
+                roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=2, key="roi_col1")
+                sens_roi = st.slider("ROI感度", 5, 50, 20, key="roi_sens1")
+                bright_roi = st.slider("ROI輝度", 0, 255, 40, key="roi_bri1")
         elif mode.startswith("2."):
             min_size = st.slider("最小核サイズ (px)", 10, 500, 50); bright_count = st.slider("検出しきい値", 0, 255, 50)
-            use_roi_norm = st.checkbox("組織面積 (ROI) で正規化", value=True)
+            use_roi_norm = st.checkbox("組織面積 (ROI) で正規化", value=True, key="roi_mode2")
             if use_roi_norm:
-                roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=2); sens_roi = st.slider("ROI感度", 5, 50, 20); bright_roi = st.slider("ROI輝度", 0, 255, 40)
+                roi_color = st.selectbox("組織の色:", list(COLOR_MAP.keys()), index=2, key="roi_col2")
+                sens_roi = st.slider("ROI感度", 5, 50, 20, key="roi_sens2")
+                bright_roi = st.slider("ROI輝度", 0, 255, 40, key="roi_bri2")
         elif mode.startswith("3."):
             c1, c2 = st.columns(2)
             with c1:
@@ -234,19 +249,9 @@ with st.sidebar:
     # アクティブな設定値のテーブル表示用
     current_active_params = {
         "解析モード": mode,
-        "空間スケール": scale_val
+        "空間スケール": scale_val,
+        "ROI正規化": use_roi_norm if 'use_roi_norm' in locals() else False
     }
-
-    if mode.startswith("1."):
-        current_active_params.update({"対象色": target_a, "感度": sens_a, "輝度": bright_a})
-    elif mode.startswith("2."):
-        current_active_params.update({"最小サイズ": min_size, "閾値": bright_count, "ROI正規化": use_roi_norm})
-    elif mode.startswith("3."):
-        current_active_params.update({"対象A": target_a, "感度A": sens_a, "対象B": target_b, "感度B": sens_b})
-    elif mode.startswith("4."):
-        current_active_params.update({"起点A": target_a, "対象B": target_b, "共通感度": sens_common})
-    elif mode.startswith("5."):
-        current_active_params.update({"トレンド指標": trend_metric, "条件値": f"{ratio_val}{ratio_unit}"})
 
     st.divider()
     st.markdown("### ⚙️ トレーサビリティ (現在設定)")
@@ -288,47 +293,70 @@ with tab_main:
                 val, unit, res_disp = 0.0, "", img_rgb.copy()
                 h, w = img_rgb.shape[:2]; fov_mm2 = (h * w) * ((scale_val / 1000) ** 2)
 
-                # 追加データ用変数（密度などを保持）
                 extra_data = {}
 
+                # --- 面積占有率モード (ROI正規化対応) ---
                 if mode.startswith("1.") or (mode.startswith("5.") and trend_metric.startswith("面積")):
-                    mask = get_mask(img_hsv, target_a, sens_a, bright_a); val = (cv2.countNonZero(mask) / (h * w)) * 100
-                    unit = "% Area"; res_disp = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB); res_disp[:,:,0]=0; res_disp[:,:,2]=0
-                
+                    mask_target = get_mask(img_hsv, target_a, sens_a, bright_a)
+                    
+                    a_denominator_px = h * w
+                    roi_status = "Field of View"
+                    final_mask = mask_target
+                    
+                    if use_roi_norm:
+                        mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
+                        # 組織内部にある抽出色のみをカウント
+                        final_mask = cv2.bitwise_and(mask_target, mask_roi)
+                        a_denominator_px = cv2.countNonZero(mask_roi)
+                        roi_status = "Inside ROI"
+                        # ROIの外郭を赤線で描画
+                        cv2.drawContours(res_disp, cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], -1, (255,0,0), 3)
+
+                    target_px = cv2.countNonZero(final_mask)
+                    val = (target_px / a_denominator_px * 100) if a_denominator_px > 0 else 0
+                    unit = "% Area"
+                    
+                    # 緑色で抽出範囲を表示
+                    res_disp_mask = cv2.cvtColor(final_mask, cv2.COLOR_GRAY2RGB)
+                    res_disp_mask[:,:,0]=0; res_disp_mask[:,:,2]=0
+                    res_disp = cv2.addWeighted(res_disp, 0.7, res_disp_mask, 0.3, 0)
+                    
+                    a_target_mm2 = a_denominator_px * ((scale_val/1000)**2)
+                    extra_data = {
+                        "対象面積(mm2)": round(a_target_mm2, 6),
+                        "正規化基準": roi_status
+                    }
+
+                # --- 細胞核カウントモード ---
                 elif mode.startswith("2."):
-                    # 細胞核カウント & 密度計算ロジック (完全版)
                     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY); _, th = cv2.threshold(gray, bright_count, 255, cv2.THRESH_BINARY)
                     blur = cv2.GaussianBlur(gray, (5,5), 0); _, otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
                     cnts, _ = cv2.findContours(cv2.bitwise_and(th, otsu), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     valid = [c for c in cnts if cv2.contourArea(c) > min_size]; val, unit = len(valid), "cells"
                     cv2.drawContours(res_disp, valid, -1, (0,255,0), 2)
                     
-                    # 密度計算
-                    a_target_mm2 = fov_mm2 # デフォルト: 視野全体
+                    a_target_mm2 = fov_mm2
                     roi_status = "Field of View"
                     
                     if use_roi_norm:
                         mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
                         roi_px = cv2.countNonZero(mask_roi)
-                        a_target_mm2 = roi_px * ((scale_val/1000)**2) # px -> mm2
+                        a_target_mm2 = roi_px * ((scale_val/1000)**2)
                         roi_status = "Inside ROI"
-                        # ROIの外郭を青色で描画
                         cv2.drawContours(res_disp, cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], -1, (255,0,0), 3)
 
                     density = val / a_target_mm2 if a_target_mm2 > 0 else 0
-                    
-                    # CSV記録用にデータを保存
                     extra_data = {
                         "対象面積(mm2)": round(a_target_mm2, 6),
                         "密度(cells/mm2)": round(density, 2),
                         "正規化基準": roi_status
                     }
 
+                # --- その他のモード ---
                 elif mode.startswith("3.") or (mode.startswith("5.") and trend_metric.startswith("共局在")):
                     mask_a = get_mask(img_hsv, target_a, sens_a, bright_a); mask_b = get_mask(img_hsv, target_b, sens_b, bright_b)
                     coloc = cv2.bitwise_and(mask_a, mask_b); denom = cv2.countNonZero(mask_a)
                     val = (cv2.countNonZero(coloc) / denom * 100) if denom > 0 else 0; unit = "% Coloc"; res_disp = cv2.merge([mask_b, mask_a, np.zeros_like(mask_a)])
-                
                 elif mode.startswith("4."):
                     ma, mb = get_mask(img_hsv, target_a, sens_common, bright_common), get_mask(img_hsv, target_b, sens_common, bright_common)
                     pa, pb = get_centroids(ma), get_centroids(mb)
@@ -339,12 +367,15 @@ with tab_main:
                 st.markdown(f"### 📷 画像 {i+1}: {file.name}")
                 st.markdown(f"**検出グループ:** `{current_group_label}`")
                 
-                # 結果表示の分岐 (密度がある場合はリッチに表示)
-                if mode.startswith("2.") and "密度(cells/mm2)" in extra_data:
+                if "密度(cells/mm2)" in extra_data:
                     c_m1, c_m2, c_m3 = st.columns(3)
                     c_m1.metric("カウント数", f"{int(val)} cells")
                     c_m2.metric("細胞密度", f"{int(extra_data['密度(cells/mm2)']):,} /mm²")
                     c_m3.caption(f"面積: {extra_data['対象面積(mm2)']:.4f} mm² ({extra_data['正規化基準']})")
+                elif "対象面積(mm2)" in extra_data:
+                    c_m1, c_m2 = st.columns(2)
+                    c_m1.metric("占有率", f"{val:.2f} %")
+                    c_m2.caption(f"分母面積: {extra_data['対象面積(mm2)']:.4f} mm² ({extra_data['正規化基準']})")
                 else:
                     st.markdown(f"### 解析結果: **{val:.2f} {unit}**")
                 
@@ -359,10 +390,7 @@ with tab_main:
                     "測定値": val,
                     "単位": unit,
                 }
-                # 追加データ（密度など）があれば結合
-                if extra_data:
-                    row_data.update(extra_data)
-                    
+                if extra_data: row_data.update(extra_data)
                 row_data.update(current_active_params)
                 batch_results.append(row_data)
         
@@ -375,9 +403,7 @@ with tab_main:
         st.divider()
         st.header("💾 CSV出力 (完全トレーサビリティ対応)")
         df_exp = pd.DataFrame(st.session_state.analysis_history)
-        
         st.dataframe(df_exp, use_container_width=True)
-        
         utc_filename = f"quantified_data_{st.session_state.current_analysis_id}.csv"
         st.download_button("📥 結果CSVをダウンロード", df_exp.to_csv(index=False).encode('utf-8-sig'), utc_filename)
 
@@ -394,26 +420,19 @@ with tab_val:
 
     if not df_val.empty:
         gt_map = {'C14': 14, 'C40': 40, 'C70': 70, 'C100': 100}
-        
-        # W1/W2比較のためFocus 1-5を使用
         df_hq = df_val[(df_val['Focus'] >= 1) & (df_val['Focus'] <= 5)]
-        
-        # W1フォーカス統計
         w1_hq = df_hq[df_hq['Channel'] == 'W1']
         avg_acc = w1_hq['Accuracy'].mean()
         df_lin = w1_hq.groupby('Ground Truth')['Value'].mean().reset_index()
         r2 = np.corrcoef(df_lin['Ground Truth'], df_lin['Value'])[0, 1]**2
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("平均精度 (Accuracy)", f"{avg_acc:.1f}%", help="Focus 1-5 平均値")
-        m2.metric("線形性 (R²)", f"{r2:.4f}", help="実測値ベース")
+        m1.metric("平均精度 (Accuracy)", f"{avg_acc:.1f}%")
+        m2.metric("線形性 (R²)", f"{r2:.4f}")
         m3.metric("検証画像数", "3,200+")
 
         st.divider()
-
-        # グラフ 1: 線形性 (W1 vs W2)
         st.subheader("📈 1. 計数性能と線形性 (W1 vs W2)")
-        st.info("💡 **結論:** W1（核）は極めて高い線形性を示しますが、W2（細胞質）は**V字型の乖離**を示し、定量的解析には不適であることが証明されています。")
         fig1, ax1 = plt.subplots(figsize=(10, 5))
         ax1.plot([0, 110], [0, 110], 'k--', alpha=0.3, label='Ideal Line')
         ax1.scatter(df_lin['Ground Truth'], df_lin['Value'], color='#1f77b4', s=100, label='W1 (Nuclei)', zorder=5)
@@ -425,8 +444,6 @@ with tab_val:
         st.pyplot(fig1)
 
         st.divider()
-
-        # グラフ 2 & 3
         c1, c2 = st.columns(2)
         with c1:
             st.subheader("📊 2. 密度別精度比較")
@@ -436,7 +453,6 @@ with tab_val:
             sns.barplot(data=df_bar, x='Density', y='Accuracy', hue='Channel', palette={'W1': '#1f77b4', 'W2': '#ff7f0e'}, ax=ax2)
             ax2.axhline(100, color='red', linestyle='--'); ax2.set_ylabel('精度 Accuracy (%)')
             st.pyplot(fig2)
-        
         with c2:
             st.subheader("📉 3. 光学的堅牢性 (ボケ耐性)")
             fig3, ax3 = plt.subplots(figsize=(8, 6))
@@ -445,10 +461,7 @@ with tab_val:
             sns.lineplot(data=df_decay, x='Focus', y='Accuracy', hue='Density', marker='o', ax=ax3)
             ax3.axhline(100, color='red', linestyle='--'); ax3.set_ylabel('精度 Accuracy (%)')
             st.pyplot(fig3)
-
         st.divider()
-
-        # 数値テーブル
         st.subheader("📋 4. バリデーション数値データ")
         summary = df_hq.groupby(['Density', 'Channel'])['Accuracy'].mean().unstack().reset_index()
         summary['理論値'] = summary['Density'].map(gt_map)
