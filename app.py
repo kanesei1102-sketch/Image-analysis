@@ -228,13 +228,69 @@ with st.sidebar:
                 bright_roi = st.slider("ROI輝度", 0, 255, 40, key="roi_bri2")
                 current_params_dict.update({"ROI色": roi_color, "ROI感度": sens_roi, "ROI輝度": bright_roi})
 
-        elif mode.startswith("3."):
+        # ---------------------------------------------------------
+# [追加] 色名から表示チャンネル(R,G,B)を自動判定する関数
+# ---------------------------------------------------------
+def get_channel_index(color_name):
+    # 赤系キーワードが含まれていれば R(0) チャンネル
+    if any(k in color_name for k in ["赤", "エオジン", "茶色"]):
+        return 0 
+    # 緑系なら G(1)
+    elif "緑" in color_name:
+        return 1
+    # 青系なら B(2)
+    elif any(k in color_name for k in ["青", "ヘマトキシリン"]):
+        return 2
+    return 1 # デフォルトは緑
+
+# ---------------------------------------------------------
+# [修正] Mode 3 (共局在解析) のブロック全体
+# ---------------------------------------------------------
+        elif mode.startswith("3.") or (mode.startswith("5.") and trend_metric.startswith("共局在")):
+            st.info("💡 設定ガイド: **CH-B (基準)** の領域内で、**CH-A (対象)** がどれだけ重なっているかを計算します。")
+    
             c1, c2 = st.columns(2)
             with c1:
-                target_a = st.selectbox("CH-A:", list(COLOR_MAP.keys()), index=3); sens_a = st.slider("A 感度", 5, 50, 20); bright_a = st.slider("A 輝度", 0, 255, 60)
+                # ラベルを汎用的に変更
+                target_b = st.selectbox("CH-B (基準/分母):", list(COLOR_MAP.keys()), index=3) # デフォルト青
+                sens_b = st.slider("B 感度 (基準エリア)", 5, 50, 20)
+                bright_b = st.slider("B 輝度", 0, 255, 60)
             with c2:
-                target_b = st.selectbox("CH-B:", list(COLOR_MAP.keys()), index=2); sens_b = st.slider("B 感度", 5, 50, 20); bright_b = st.slider("B 輝度", 0, 255, 60)
-            current_params_dict.update({"CH-A": target_a, "感度A": sens_a, "輝度A": bright_a, "CH-B": target_b, "感度B": sens_b, "輝度B": bright_b})
+                target_a = st.selectbox("CH-A (対象/分子):", list(COLOR_MAP.keys()), index=1) # デフォルト緑
+                sens_a = st.slider("A 感度 (重なり判定)", 5, 50, 20)
+                bright_a = st.slider("A 輝度", 0, 255, 60)
+    
+            # パラメータ保存
+            current_params_dict.update({
+                "CH-A(対象)": target_a, "感度A": sens_a, "輝度A": bright_a,
+                "CH-B(基準)": target_b, "感度B": sens_b, "輝度B": bright_b
+            })
+
+            # マスク生成
+            mask_a = get_mask(img_hsv, target_a, sens_a, bright_a) # 分子
+            mask_b = get_mask(img_hsv, target_b, sens_b, bright_b) # 分母
+
+            # 共局在計算 (常に CH-B を分母とする)
+            denom = cv2.countNonZero(mask_b)
+            coloc = cv2.bitwise_and(mask_a, mask_b)
+            val = (cv2.countNonZero(coloc) / denom * 100) if denom > 0 else 0
+            unit = "% Coloc"
+
+            # --- [核心] ダイナミック表示生成ロジック ---
+            # 真っ黒な画像を用意 (R, G, B)
+            disp_channels = [np.zeros_like(mask_a), np.zeros_like(mask_a), np.zeros_like(mask_a)]
+    
+            # 選ばれた色名に基づいて、マスクを正しいチャンネルに投入
+            idx_a = get_channel_index(target_a)
+            idx_b = get_channel_index(target_b)
+    
+            # 加算合成 (同じ色が選ばれても大丈夫なように bitwise_or を使用)
+            disp_channels[idx_a] = cv2.bitwise_or(disp_channels[idx_a], mask_a)
+            disp_channels[idx_b] = cv2.bitwise_or(disp_channels[idx_b], mask_b)
+
+            # Streamlit用のRGB画像としてマージ
+            # disp_channels[0]=R, [1]=G, [2]=B
+            res_disp = cv2.merge(disp_channels)
 
         elif mode.startswith("4."):
             target_a = st.selectbox("起点 A:", list(COLOR_MAP.keys()), index=2); target_b = st.selectbox("対象 B:", list(COLOR_MAP.keys()), index=3)
