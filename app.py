@@ -12,7 +12,7 @@ import uuid
 # 0. ページ設定 & 定数
 # ---------------------------------------------------------
 st.set_page_config(page_title="Bio-Image Quantifier V2 (JP)", layout="wide")
-SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.04 (BugFix/Clear-All)"
+SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.05 (JP/Param-Fix)"
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = str(uuid.uuid4())
@@ -130,7 +130,7 @@ df_val = load_validation_data()
 # 3. UI & パラメータ
 # ---------------------------------------------------------
 st.title("🔬 Bio-Image Quantifier: Pro Edition (日本語版)")
-st.caption(f"{SOFTWARE_VERSION}: 画像クリア修正済")
+st.caption(f"{SOFTWARE_VERSION}: 視認性改善 & CSV列固定")
 st.sidebar.markdown(f"**Analysis ID (UTC):**\n`{st.session_state.current_analysis_id}`")
 
 tab_main, tab_val = st.tabs(["🚀 解析実行", "🏆 性能バリデーション"])
@@ -176,9 +176,11 @@ with st.sidebar:
                 target_a = st.selectbox("CH-A (対象/分子):", list(COLOR_MAP.keys()), index=1)
                 sens_a = st.slider("A 感度", 5, 50, 20); bright_a = st.slider("A 輝度", 0, 255, 60)
             min_size = st.slider("最小細胞サイズ (px)", 10, 500, 50)
+            
+            # パラメータ名をA/Bで統一
             current_params_dict.update({
-                f"Param_{CLEAN_NAMES[target_a]}_Sens": sens_a, f"Param_{CLEAN_NAMES[target_a]}_Bright": bright_a,
-                f"Param_{CLEAN_NAMES[target_b]}_Sens": sens_b, f"Param_{CLEAN_NAMES[target_b]}_Bright": bright_b,
+                "Param_A_Name": CLEAN_NAMES[target_a], "Param_A_Sens": sens_a, "Param_A_Bright": bright_a,
+                "Param_B_Name": CLEAN_NAMES[target_b], "Param_B_Sens": sens_b, "Param_B_Bright": bright_b,
                 "Param_MinSize_px": min_size
             })
         else:
@@ -186,14 +188,17 @@ with st.sidebar:
             sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
             min_size = st.slider("最小細胞サイズ (px)", 10, 500, 50)
             use_roi_norm = st.checkbox("ROI正規化", value=False)
+            
+            # 固定パラメータキー
             current_params_dict.update({
-                f"Param_{CLEAN_NAMES[target_a]}_Sens": sens_a, f"Param_{CLEAN_NAMES[target_a]}_Bright": bright_a,
+                "Param_Target_Name": CLEAN_NAMES[target_a],
+                "Param_Sensitivity": sens_a, "Param_Brightness": bright_a,
                 "Param_ROI_Norm": use_roi_norm, "Param_MinSize_px": min_size
             })
             if use_roi_norm:
                 roi_color = st.selectbox("ROI色:", list(COLOR_MAP.keys()), index=5)
                 sens_roi = st.slider("ROI感度", 5, 50, 20); bright_roi = st.slider("ROI輝度", 0, 255, 40)
-                current_params_dict.update({f"Param_ROI_{CLEAN_NAMES[roi_color]}_Sens": sens_roi, f"Param_ROI_{CLEAN_NAMES[roi_color]}_Bright": bright_roi})
+                current_params_dict.update({"Param_ROI_Name": CLEAN_NAMES[roi_color], "Param_ROI_Sens": sens_roi, "Param_ROI_Bright": bright_roi})
 
     elif mode.startswith("3."):
         c1, c2 = st.columns(2)
@@ -204,10 +209,10 @@ with st.sidebar:
             target_a = st.selectbox("CH-A (対象/分子):", list(COLOR_MAP.keys()), index=1) 
             sens_a = st.slider("A 感度", 5, 50, 20); bright_a = st.slider("A 輝度", 0, 255, 60)
         min_size = st.slider("最小細胞サイズ (px)", 10, 500, 50)
+        
         current_params_dict.update({
-            "Target_A_Name": CLEAN_NAMES[target_a], "Target_B_Name": CLEAN_NAMES[target_b],
-            f"Param_{CLEAN_NAMES[target_a]}_Sens": sens_a, f"Param_{CLEAN_NAMES[target_a]}_Bright": bright_a,
-            f"Param_{CLEAN_NAMES[target_b]}_Sens": sens_b, f"Param_{CLEAN_NAMES[target_b]}_Bright": bright_b,
+            "Param_A_Name": CLEAN_NAMES[target_a], "Param_A_Sens": sens_a, "Param_A_Bright": bright_a,
+            "Param_B_Name": CLEAN_NAMES[target_b], "Param_B_Sens": sens_b, "Param_B_Bright": bright_b,
             "Param_MinSize_px": min_size
         })
 
@@ -216,37 +221,40 @@ with st.sidebar:
         sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
         min_size = st.slider("最小細胞サイズ (px)", 10, 500, 50)
         use_roi_norm = st.checkbox("ROI正規化", value=False)
+        
         current_params_dict.update({
-            "Target_Name": CLEAN_NAMES[target_a],
-            f"Param_{CLEAN_NAMES[target_a]}_Sens": sens_a, f"Param_{CLEAN_NAMES[target_a]}_Bright": bright_a,
+            "Param_Target_Name": CLEAN_NAMES[target_a],
+            "Param_Sensitivity": sens_a, "Param_Brightness": bright_a,
             "Param_ROI_Norm": use_roi_norm, "Param_MinSize_px": min_size
         })
         if use_roi_norm:
             roi_color = st.selectbox("ROI色:", list(COLOR_MAP.keys()), index=5)
             sens_roi = st.slider("ROI感度", 5, 50, 20); bright_roi = st.slider("ROI輝度", 0, 255, 40)
-            current_params_dict.update({f"Param_ROI_{CLEAN_NAMES[roi_color]}_Sens": sens_roi, f"Param_ROI_{CLEAN_NAMES[roi_color]}_Bright": bright_roi})
+            current_params_dict.update({"Param_ROI_Name": CLEAN_NAMES[roi_color], "Param_ROI_Sens": sens_roi, "Param_ROI_Bright": bright_roi})
 
     elif mode.startswith("2."):
         target_a = st.selectbox("核の色:", list(COLOR_MAP.keys()), index=4)
         sens_a = st.slider("核の感度", 5, 50, 20); bright_a = st.slider("核の輝度", 0, 255, 50)
         min_size = st.slider("最小核サイズ", 10, 500, 50)
         use_roi_norm = st.checkbox("ROI正規化", value=True)
+        
+        # ★ ここを英語版同様に固定キーへ修正 ★
         current_params_dict.update({
-            "Target_Name": CLEAN_NAMES[target_a],
-            f"Param_{CLEAN_NAMES[target_a]}_Sens": sens_a, f"Param_{CLEAN_NAMES[target_a]}_Bright": bright_a,
+            "Param_Target_Name": CLEAN_NAMES[target_a],
+            "Param_Sensitivity": sens_a, "Param_Brightness": bright_a,
             "Param_ROI_Norm": use_roi_norm, "Param_MinSize_px": min_size
         })
         if use_roi_norm:
             roi_color = st.selectbox("ROI色:", list(COLOR_MAP.keys()), index=5)
             sens_roi = st.slider("ROI感度", 5, 50, 20); bright_roi = st.slider("ROI輝度", 0, 255, 40)
-            current_params_dict.update({f"Param_ROI_{CLEAN_NAMES[roi_color]}_Sens": sens_roi, f"Param_ROI_{CLEAN_NAMES[roi_color]}_Bright": bright_roi})
+            current_params_dict.update({"Param_ROI_Name": CLEAN_NAMES[roi_color], "Param_ROI_Sens": sens_roi, "Param_ROI_Bright": bright_roi})
 
     elif mode.startswith("4."):
         target_a = st.selectbox("起点 A:", list(COLOR_MAP.keys()), index=2); target_b = st.selectbox("対象 B:", list(COLOR_MAP.keys()), index=3)
         sens_common = st.slider("共通感度", 5, 50, 20); bright_common = st.slider("共通輝度", 0, 255, 60)
         min_size = 50
         current_params_dict.update({
-            "Target_A_Name": CLEAN_NAMES[target_a], "Target_B_Name": CLEAN_NAMES[target_b],
+            "Param_A_Name": CLEAN_NAMES[target_a], "Param_B_Name": CLEAN_NAMES[target_b],
             "Param_Common_Sens": sens_common, "Param_Common_Bright": bright_common
         })
 
@@ -255,21 +263,20 @@ with st.sidebar:
     current_params_dict["Param_Scale_um_px"] = scale_val
     current_params_dict["Analysis_Mode"] = mode
 
-    # --- ボタンのアクション関数定義 ---
+    # --- ボタンのアクション関数 ---
     def prepare_next_group(): 
         st.session_state.uploader_key = str(uuid.uuid4())
 
     def clear_all_history():
         st.session_state.analysis_history = []
-        st.session_state.uploader_key = str(uuid.uuid4()) # ★ここを修正★
-        # 新しいIDを発行
+        st.session_state.uploader_key = str(uuid.uuid4()) # 画像もクリア
         utc_now = datetime.datetime.now(datetime.timezone.utc)
         date_str = utc_now.strftime('%Y%m%d-%H%M%S')
         unique_suffix = str(uuid.uuid4())[:6]
         st.session_state.current_analysis_id = f"AID-{date_str}-UTC-{unique_suffix}"
 
     st.button("📸 次のグループへ (画像クリア)", on_click=prepare_next_group)
-    st.button("履歴クリア & 新規ID発行", on_click=clear_all_history) # コールバックを使用
+    st.button("履歴クリア & 新規ID発行", on_click=clear_all_history)
 
     st.divider()
     utc_csv_name = f"Settings_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S_UTC')}.csv"
@@ -293,20 +300,18 @@ with tab_main:
                     except: current_group_label = "Unknown"
                 else: current_group_label = sample_group
 
-                # 画像読み込み
                 img_f = img_raw.astype(np.float32); mn, mx = np.min(img_f), np.max(img_f)
                 img_8 = ((img_f - mn) / (mx - mn) * 255.0 if mx > mn else np.clip(img_f, 0, 255)).astype(np.uint8)
                 img_bgr = cv2.cvtColor(img_8, cv2.COLOR_GRAY2BGR) if len(img_8.shape) == 2 else img_8[:,:,:3]
                 img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB); img_hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
                 
-                # 結果表示用のベースを「元画像」にする
+                # 元画像ベースの表示
                 res_disp = img_rgb.copy()
                 
                 val, unit = 0.0, ""
                 h, w = img_rgb.shape[:2]; denominator_area_mm2 = (h * w) * ((scale_val/1000)**2)
                 roi_status = "FoV"; extra_data = {}
 
-                # 描画色の決定 (ハイコントラストなら緑、そうでなければ定義色)
                 def get_draw_color(target_name):
                     return (0, 255, 0) if high_contrast else DISPLAY_COLORS[target_name]
 
@@ -323,7 +328,6 @@ with tab_main:
                     unit = "% Coloc"
                     extra_data.update(calc_metrics(coloc, scale_val, denominator_area_mm2, 0, "Coloc_Region"))
 
-                    # オーバーレイ描画
                     overlay = img_rgb.copy()
                     color_a = get_draw_color(target_a)
                     overlay[coloc > 0] = color_a 
@@ -427,6 +431,8 @@ with tab_main:
         st.dataframe(df_exp)
         utc_filename = f"QuantData_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S_UTC')}.csv"
         st.download_button("📥 結果CSV (UTC)", df_exp.to_csv(index=False).encode('utf-8-sig'), utc_filename)
+
+
 
 
 
