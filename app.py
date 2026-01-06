@@ -12,7 +12,7 @@ import uuid
 # 0. ページ設定 & 定数
 # ---------------------------------------------------------
 st.set_page_config(page_title="Bio-Image Quantifier V2 (JP)", layout="wide")
-SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.02 (Ultimate/Full-Display)"
+SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.02 (UTC-Standard)"
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = str(uuid.uuid4())
@@ -20,14 +20,17 @@ if 'uploader_key' not in st.session_state:
 if "analysis_history" not in st.session_state:
     st.session_state.analysis_history = []
 
+# 解析セッションIDもUTCベースで生成
 if "current_analysis_id" not in st.session_state:
-    date_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d')
-    unique_suffix = str(uuid.uuid4())[:8]
-    st.session_state.current_analysis_id = f"AID-{date_str}-{unique_suffix}"
+    utc_now = datetime.datetime.now(datetime.timezone.utc)
+    date_str = utc_now.strftime('%Y%m%d-%H%M%S') # UTCタイムスタンプ
+    unique_suffix = str(uuid.uuid4())[:6]
+    st.session_state.current_analysis_id = f"AID-{date_str}-UTC-{unique_suffix}"
 
 # ---------------------------------------------------------
-# 1. 画像処理エンジン
+# 1. 画像処理エンジン & 辞書定義
 # ---------------------------------------------------------
+# UI表示名と内部処理用パラメータの定義
 COLOR_MAP = {
     "茶色 (DAB)": {"lower": np.array([10, 50, 20]), "upper": np.array([30, 255, 255])},
     "緑色 (GFP)": {"lower": np.array([35, 40, 40]), "upper": np.array([85, 255, 255])},
@@ -37,7 +40,17 @@ COLOR_MAP = {
     "エオジン (Cytoplasm)": {"lower": np.array([140, 20, 100]), "upper": np.array([180, 255, 255])}
 }
 
-# 表示色 (BGRではなくRGBで定義)
+# CSVヘッダー用のクリーンな英語名変換マップ
+CLEAN_NAMES = {
+    "茶色 (DAB)": "Brown_DAB",
+    "緑色 (GFP)": "Green_GFP",
+    "赤色 (RFP)": "Red_RFP",
+    "青色 (DAPI)": "Blue_DAPI",
+    "ヘマトキシリン (Nuclei)": "Blue_Nuclei",
+    "エオジン (Cytoplasm)": "Pink_Cyto"
+}
+
+# 画面表示用の色 (RGB)
 DISPLAY_COLORS = {
     "茶色 (DAB)": (165, 42, 42),
     "緑色 (GFP)": (0, 255, 0),
@@ -52,7 +65,7 @@ def get_mask(hsv_img, color_name, sens, bright_min):
     l = conf["lower"].copy()
     u = conf["upper"].copy()
     
-    # 赤色系のHue回り込み処理
+    # 赤色系(Hue 0付近と180付近)のラップアラウンド処理
     if color_name == "赤色 (RFP)" or "エオジン" in color_name:
         lower1 = np.array([0, 30, bright_min])
         upper1 = np.array([10 + sens, 255, 255])
@@ -82,14 +95,14 @@ def get_centroids(mask):
         if M["m00"] != 0: pts.append(np.array([M["m10"]/M["m00"], M["m01"]/M["m00"]]))
     return pts
 
-def calc_metrics(mask, scale_val, denominator_area_mm2, min_size, prefix=""):
+def calc_metrics(mask, scale_val, denominator_area_mm2, min_size, clean_name):
     """
-    あらゆるマスクに対して、面積・カウント・密度を計算して返す
+    マスクから各種指標を計算し、clean_name (例: Green_GFP) をプレフィックスにした辞書を返す
     """
     px_count = cv2.countNonZero(mask)
     area_mm2 = px_count * ((scale_val/1000)**2)
     
-    # カウント（粒子解析）
+    # 粒子解析 (カウント)
     kernel = np.ones((3,3), np.uint8)
     mask_opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     cnts, _ = cv2.findContours(mask_opened, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -99,10 +112,10 @@ def calc_metrics(mask, scale_val, denominator_area_mm2, min_size, prefix=""):
     density = count / denominator_area_mm2 if denominator_area_mm2 > 0 else 0
     
     return {
-        f"{prefix}Area(px)": px_count,
-        f"{prefix}Area(mm2)": round(area_mm2, 6),
-        f"{prefix}Count": count,
-        f"{prefix}Density(/mm2)": round(density, 2)
+        f"{clean_name}_Area_px": px_count,
+        f"{clean_name}_Area_mm2": round(area_mm2, 6),
+        f"{clean_name}_Count": count,
+        f"{clean_name}_Density_per_mm2": round(density, 2)
     }
 
 # ---------------------------------------------------------
@@ -133,8 +146,8 @@ df_val = load_validation_data()
 # 3. UIフレームワーク
 # ---------------------------------------------------------
 st.title("🔬 Bio-Image Quantifier: Pro Edition (日本語版)")
-st.caption(f"{SOFTWARE_VERSION}")
-st.sidebar.markdown(f"**解析ID:** `{st.session_state.current_analysis_id}`")
+st.caption(f"{SOFTWARE_VERSION}: UTC-Compliant Data Integrity System")
+st.sidebar.markdown(f"**Analysis ID (UTC):**\n`{st.session_state.current_analysis_id}`")
 
 tab_main, tab_val = st.tabs(["🚀 解析実行", "🏆 性能バリデーション"])
 
@@ -150,17 +163,19 @@ with st.sidebar:
 
     st.divider()
     st.markdown("### 🏷️ グループ化設定")
-    group_strategy = st.radio("ラベル決定方法:", ["手動入力", "ファイル名から自動抽出"])
-    if group_strategy.startswith("手動"):
+    group_strategy = st.radio("ラベル決定方法:", ["ファイル名から自動抽出", "手動入力"])
+    
+    if group_strategy == "手動入力":
         sample_group = st.text_input("グループ名:", value="Control")
         filename_sep = None
     else:
-        filename_sep = st.text_input("区切り文字:", value="_")
+        filename_sep = st.text_input("区切り文字 (例: _ ):", value="_", help="この文字より前をグループ名にします")
+        st.info(f"例: '100_100.tif' → Group: '100'")
         sample_group = "(自動検出)" 
 
     st.divider()
 
-    # --- パラメータ設定 (全モードで共通化できるものは共通化) ---
+    # --- パラメータ保存用辞書 (感度・輝度すべてをここに記録) ---
     current_params_dict = {}
 
     if mode.startswith("5."):
@@ -168,8 +183,7 @@ with st.sidebar:
         trend_metric = st.radio("測定指標:", ["共局在率", "面積占有率"])
         ratio_val = st.number_input("条件値:", value=0, step=10)
         ratio_unit = st.text_input("単位:", value="%", key="unit")
-        if group_strategy.startswith("手動"): sample_group = f"{ratio_val}{ratio_unit}"
-        current_params_dict["条件値"] = f"{ratio_val}{ratio_unit}"
+        current_params_dict.update({"Trend_Metric": trend_metric, "Condition_Val": ratio_val, "Condition_Unit": ratio_unit})
         
         if trend_metric.startswith("共局在"):
             # 共局在設定
@@ -182,19 +196,28 @@ with st.sidebar:
                 target_a = st.selectbox("CH-A (対象/分子):", list(COLOR_MAP.keys()), index=1)
                 sens_a = st.slider("A 感度", 5, 50, 20); bright_a = st.slider("A 輝度", 0, 255, 60)
             
-            min_size = st.slider("最小細胞サイズ (px, 密度計算用)", 10, 500, 50)
-            current_params_dict.update({"CH-A": target_a, "感度A": sens_a, "CH-B": target_b, "感度B": sens_b, "最小サイズ": min_size})
+            min_size = st.slider("最小細胞サイズ (px)", 10, 500, 50)
+            # 【重要】パラメータを直感的なキー名で保存
+            current_params_dict.update({
+                f"Param_{CLEAN_NAMES[target_a]}_Sens": sens_a, f"Param_{CLEAN_NAMES[target_a]}_Bright": bright_a,
+                f"Param_{CLEAN_NAMES[target_b]}_Sens": sens_b, f"Param_{CLEAN_NAMES[target_b]}_Bright": bright_b,
+                "Param_MinSize_px": min_size
+            })
         else:
             # 面積設定
             target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys()), index=2)
             sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
-            min_size = st.slider("最小細胞サイズ (px, 参考カウント用)", 10, 500, 50)
+            min_size = st.slider("最小細胞サイズ (px)", 10, 500, 50)
             use_roi_norm = st.checkbox("ROI正規化", value=False)
-            current_params_dict.update({"解析対象色": target_a, "感度": sens_a, "ROI正規化": use_roi_norm, "最小サイズ": min_size})
+            
+            current_params_dict.update({
+                f"Param_{CLEAN_NAMES[target_a]}_Sens": sens_a, f"Param_{CLEAN_NAMES[target_a]}_Bright": bright_a,
+                "Param_ROI_Norm": use_roi_norm, "Param_MinSize_px": min_size
+            })
             if use_roi_norm:
                 roi_color = st.selectbox("ROI色:", list(COLOR_MAP.keys()), index=5)
                 sens_roi = st.slider("ROI感度", 5, 50, 20); bright_roi = st.slider("ROI輝度", 0, 255, 40)
-                current_params_dict.update({"ROI色": roi_color})
+                current_params_dict.update({f"Param_ROI_{CLEAN_NAMES[roi_color]}_Sens": sens_roi, f"Param_ROI_{CLEAN_NAMES[roi_color]}_Bright": bright_roi})
 
     elif mode.startswith("3."):
         st.info("💡 **CH-B (基準/分母)** の領域内で、**CH-A (対象/分子)** がどれだけ重なっているかを計算します。")
@@ -208,52 +231,73 @@ with st.sidebar:
             sens_a = st.slider("A 感度 (対象)", 5, 50, 20)
             bright_a = st.slider("A 輝度", 0, 255, 60)
         
-        # 密度計算のためのパラメータ
         min_size = st.slider("最小細胞サイズ (px, 密度計算用)", 10, 500, 50)
-        current_params_dict.update({"CH-A": target_a, "感度A": sens_a, "CH-B": target_b, "感度B": sens_b, "最小サイズ": min_size})
+        
+        # 保存用パラメータ
+        current_params_dict.update({
+            "Target_A_Name": CLEAN_NAMES[target_a], "Target_B_Name": CLEAN_NAMES[target_b],
+            f"Param_{CLEAN_NAMES[target_a]}_Sens": sens_a, f"Param_{CLEAN_NAMES[target_a]}_Bright": bright_a,
+            f"Param_{CLEAN_NAMES[target_b]}_Sens": sens_b, f"Param_{CLEAN_NAMES[target_b]}_Bright": bright_b,
+            "Param_MinSize_px": min_size
+        })
 
     elif mode.startswith("1."):
         target_a = st.selectbox("解析対象色:", list(COLOR_MAP.keys()), index=5)
         sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
         min_size = st.slider("最小細胞サイズ (px, 参考カウント用)", 10, 500, 50)
         use_roi_norm = st.checkbox("ROI正規化", value=False)
-        current_params_dict.update({"解析対象色": target_a, "感度": sens_a, "ROI正規化": use_roi_norm, "最小サイズ": min_size})
+        
+        current_params_dict.update({
+            "Target_Name": CLEAN_NAMES[target_a],
+            f"Param_{CLEAN_NAMES[target_a]}_Sens": sens_a, f"Param_{CLEAN_NAMES[target_a]}_Bright": bright_a,
+            "Param_ROI_Norm": use_roi_norm, "Param_MinSize_px": min_size
+        })
         if use_roi_norm:
             roi_color = st.selectbox("ROI色:", list(COLOR_MAP.keys()), index=5)
             sens_roi = st.slider("ROI感度", 5, 50, 20); bright_roi = st.slider("ROI輝度", 0, 255, 40)
-            current_params_dict.update({"ROI色": roi_color})
+            current_params_dict.update({f"Param_ROI_{CLEAN_NAMES[roi_color]}_Sens": sens_roi, f"Param_ROI_{CLEAN_NAMES[roi_color]}_Bright": bright_roi})
 
     elif mode.startswith("2."):
         target_a = st.selectbox("核の色:", list(COLOR_MAP.keys()), index=4)
         sens_a = st.slider("核の感度", 5, 50, 20); bright_a = st.slider("核の輝度", 0, 255, 50)
         min_size = st.slider("最小核サイズ", 10, 500, 50)
         use_roi_norm = st.checkbox("ROI正規化", value=True)
-        current_params_dict.update({"核の色": target_a, "感度": sens_a, "ROI正規化": use_roi_norm, "最小サイズ": min_size})
+        
+        current_params_dict.update({
+            "Target_Name": CLEAN_NAMES[target_a],
+            f"Param_{CLEAN_NAMES[target_a]}_Sens": sens_a, f"Param_{CLEAN_NAMES[target_a]}_Bright": bright_a,
+            "Param_ROI_Norm": use_roi_norm, "Param_MinSize_px": min_size
+        })
         if use_roi_norm:
             roi_color = st.selectbox("ROI色:", list(COLOR_MAP.keys()), index=5)
             sens_roi = st.slider("ROI感度", 5, 50, 20); bright_roi = st.slider("ROI輝度", 0, 255, 40)
-            current_params_dict.update({"ROI色": roi_color})
+            current_params_dict.update({f"Param_ROI_{CLEAN_NAMES[roi_color]}_Sens": sens_roi, f"Param_ROI_{CLEAN_NAMES[roi_color]}_Bright": bright_roi})
 
     elif mode.startswith("4."):
         target_a = st.selectbox("起点 A:", list(COLOR_MAP.keys()), index=2); target_b = st.selectbox("対象 B:", list(COLOR_MAP.keys()), index=3)
         sens_common = st.slider("共通感度", 5, 50, 20); bright_common = st.slider("共通輝度", 0, 255, 60)
         min_size = 50 
-        current_params_dict.update({"起点A": target_a, "対象B": target_b})
+        current_params_dict.update({
+            "Target_A_Name": CLEAN_NAMES[target_a], "Target_B_Name": CLEAN_NAMES[target_b],
+            "Param_Common_Sens": sens_common, "Param_Common_Bright": bright_common
+        })
 
     st.divider()
     scale_val = st.number_input("空間スケール (μm/px)", value=3.0769, format="%.4f")
-    current_params_dict["空間スケール"] = scale_val
-    current_params_dict["解析モード"] = mode
+    current_params_dict["Param_Scale_um_px"] = scale_val
+    current_params_dict["Analysis_Mode"] = mode
 
     def prepare_next_group():
         st.session_state.uploader_key = str(uuid.uuid4())
 
     st.button("📸 次のグループへ (画像クリア)", on_click=prepare_next_group)
-    if st.button("履歴クリア & 新規ID"): 
+    if st.button("履歴クリア & 新規ID発行"): 
         st.session_state.analysis_history = []; st.rerun()
 
     st.divider()
-    st.download_button("📥 設定CSV", pd.DataFrame([current_params_dict]).T.reset_index().to_csv(index=False).encode('utf-8-sig'), "params.csv")
+    # 設定CSVボタンもUTCファイル名にする
+    utc_csv_name = f"Settings_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S_UTC')}.csv"
+    st.download_button("📥 設定のみダウンロード", pd.DataFrame([current_params_dict]).T.reset_index().to_csv(index=False).encode('utf-8-sig'), utc_csv_name)
 
 # ---------------------------------------------------------
 # 4. 解析実行プロセス
@@ -268,7 +312,7 @@ with tab_main:
             img_raw = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
             
             if img_raw is not None:
-                if group_strategy.startswith("ファイル名"):
+                if group_strategy == "ファイル名から自動抽出":
                     try: current_group_label = file.name.split(filename_sep)[0]
                     except: current_group_label = "Unknown"
                 else: current_group_label = sample_group
@@ -294,9 +338,9 @@ with tab_main:
                     mask_a = get_mask(img_hsv, target_a, sens_a, bright_a)
                     mask_b = get_mask(img_hsv, target_b, sens_b, bright_b)
 
-                    # 分母・分子それぞれの基礎データを全計算して表示
-                    metrics_a = calc_metrics(mask_a, scale_val, denominator_area_mm2, min_size, "CH-A_")
-                    metrics_b = calc_metrics(mask_b, scale_val, denominator_area_mm2, min_size, "CH-B_")
+                    # 分母・分子それぞれの基礎データを全計算して表示 (英語名使用)
+                    metrics_a = calc_metrics(mask_a, scale_val, denominator_area_mm2, min_size, CLEAN_NAMES[target_a])
+                    metrics_b = calc_metrics(mask_b, scale_val, denominator_area_mm2, min_size, CLEAN_NAMES[target_b])
                     extra_data.update(metrics_a); extra_data.update(metrics_b)
 
                     # 共局在計算 (CH-Bを分母とする)
@@ -306,17 +350,14 @@ with tab_main:
                     unit = "% Coloc"
                     
                     # 共局在領域自体の詳細
-                    metrics_coloc = calc_metrics(coloc, scale_val, denominator_area_mm2, 0, "Coloc_")
+                    metrics_coloc = calc_metrics(coloc, scale_val, denominator_area_mm2, 0, "Coloc_Region")
                     extra_data.update(metrics_coloc)
 
-                    # 【修正】直感的な色表示 (選択色をそのまま描画)
+                    # 直感的な色表示 (選択色をそのまま描画)
                     color_a = DISPLAY_COLORS[target_a]
                     color_b = DISPLAY_COLORS[target_b]
-                    
-                    # マスク部分を着色
                     res_disp[mask_a > 0] = color_a
                     current_b_pixels = np.zeros_like(res_disp); current_b_pixels[mask_b > 0] = color_b
-                    # 重ね合わせ (bitwise_orで混色を表現)
                     res_disp = cv2.bitwise_or(res_disp, current_b_pixels)
 
                 # ----------------------------
@@ -332,16 +373,14 @@ with tab_main:
                         roi_status = "ROI"
                         denominator_area_mm2 = cv2.countNonZero(mask_roi) * ((scale_val/1000)**2)
                         
-                        # ROI自体のデータ
-                        extra_data.update(calc_metrics(mask_roi, scale_val, (h*w)*((scale_val/1000)**2), min_size, "ROI_"))
+                        extra_data.update(calc_metrics(mask_roi, scale_val, (h*w)*((scale_val/1000)**2), min_size, "ROI_Region"))
                         roi_conts, _ = cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                         cv2.drawContours(res_disp, roi_conts, -1, (100,100,100), 2)
 
-                    # ターゲットの詳細計算
-                    metrics_tgt = calc_metrics(final_mask, scale_val, denominator_area_mm2, min_size, "Target_")
+                    metrics_tgt = calc_metrics(final_mask, scale_val, denominator_area_mm2, min_size, CLEAN_NAMES[target_a])
                     extra_data.update(metrics_tgt)
                     
-                    # 面積率計算
+                    # メインの結果値
                     target_px = cv2.countNonZero(final_mask)
                     denom_px = cv2.countNonZero(mask_roi) if 'use_roi_norm' in locals() and use_roi_norm else (h*w)
                     val = (target_px / denom_px * 100) if denom_px > 0 else 0
@@ -356,26 +395,23 @@ with tab_main:
                 elif mode.startswith("2."):
                     mask_nuclei = get_mask(img_hsv, target_a, sens_a, bright_a)
                     
-                    # ROI処理
                     if use_roi_norm:
                         mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
                         denominator_area_mm2 = cv2.countNonZero(mask_roi) * ((scale_val/1000)**2)
                         roi_status = "ROI"
-                        extra_data.update(calc_metrics(mask_roi, scale_val, (h*w)*((scale_val/1000)**2), min_size, "ROI_"))
+                        extra_data.update(calc_metrics(mask_roi, scale_val, (h*w)*((scale_val/1000)**2), min_size, "ROI_Region"))
                         roi_conts, _ = cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                         cv2.drawContours(res_disp, roi_conts, -1, (100,100,100), 2)
 
-                    # カウント計算 (ROI内のみ有効にするなど)
                     if use_roi_norm:
                         mask_nuclei = cv2.bitwise_and(mask_nuclei, mask_roi)
 
-                    metrics_nuc = calc_metrics(mask_nuclei, scale_val, denominator_area_mm2, min_size, "Nuclei_")
+                    metrics_nuc = calc_metrics(mask_nuclei, scale_val, denominator_area_mm2, min_size, CLEAN_NAMES[target_a])
                     extra_data.update(metrics_nuc)
                     
-                    val = metrics_nuc["Nuclei_Count"]
+                    val = metrics_nuc[f"{CLEAN_NAMES[target_a]}_Count"]
                     unit = "cells"
                     
-                    # 描画
                     kernel = np.ones((3,3), np.uint8)
                     mask_disp = cv2.morphologyEx(mask_nuclei, cv2.MORPH_OPEN, kernel)
                     cnts, _ = cv2.findContours(mask_disp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -390,48 +426,47 @@ with tab_main:
                 elif mode.startswith("4."):
                     ma = get_mask(img_hsv, target_a, sens_common, bright_common)
                     mb = get_mask(img_hsv, target_b, sens_common, bright_common)
-                    extra_data.update(calc_metrics(ma, scale_val, denominator_area_mm2, min_size, "ObjA_"))
-                    extra_data.update(calc_metrics(mb, scale_val, denominator_area_mm2, min_size, "ObjB_"))
+                    extra_data.update(calc_metrics(ma, scale_val, denominator_area_mm2, min_size, CLEAN_NAMES[target_a]))
+                    extra_data.update(calc_metrics(mb, scale_val, denominator_area_mm2, min_size, CLEAN_NAMES[target_b]))
                     
                     pa, pb = get_centroids(ma), get_centroids(mb)
                     if pa and pb: val = np.mean([np.min([np.linalg.norm(a - b) for b in pb]) for a in pa]) * scale_val
                     unit = "μm"
                     res_disp = cv2.addWeighted(img_rgb, 0.5, cv2.merge([ma, mb, np.zeros_like(ma)]), 0.5, 0)
 
-                # --- 結果表示UI (ここがユーザー様の要望に対する回答) ---
+                # --- 結果表示UI ---
                 st.divider()
                 st.markdown(f"**画像:** `{file.name}`")
                 
-                # メトリクス列の作成
                 m_cols = st.columns(4)
                 m_cols[0].metric(f"解析結果 ({unit})", f"{val:.2f}")
                 
-                # モードに応じて重要なサブ指標を自動表示
-                if "CH-B_Density(/mm2)" in extra_data:
-                    m_cols[1].metric("基準密度 (CH-B)", f"{extra_data['CH-B_Density(/mm2)']} /mm²")
-                elif "Nuclei_Density(/mm2)" in extra_data:
-                    m_cols[1].metric("核密度", f"{extra_data['Nuclei_Density(/mm2)']} /mm²")
+                # ダイナミックなメトリクス表示 (選んだ色名がキーに含まれているかチェック)
+                tgt_name = CLEAN_NAMES[target_a]
+                if f"{tgt_name}_Density_per_mm2" in extra_data:
+                    m_cols[1].metric(f"{tgt_name} 密度", f"{extra_data[f'{tgt_name}_Density_per_mm2']} /mm²")
                 
-                if "Coloc_Area(mm2)" in extra_data:
-                    m_cols[2].metric("共局在面積", f"{extra_data['Coloc_Area(mm2)']} mm²")
-                elif "Target_Area(mm2)" in extra_data:
-                    m_cols[2].metric("対象面積", f"{extra_data['Target_Area(mm2)']} mm²")
+                if "Coloc_Region_Area_mm2" in extra_data:
+                    m_cols[2].metric("共局在面積", f"{extra_data['Coloc_Region_Area_mm2']} mm²")
+                elif f"{tgt_name}_Area_mm2" in extra_data:
+                    m_cols[2].metric(f"{tgt_name} 面積", f"{extra_data[f'{tgt_name}_Area_mm2']} mm²")
 
                 if "Normalization_Base" in extra_data:
                     m_cols[3].metric("正規化基準", extra_data["Normalization_Base"])
 
-                # 詳細データの展開表示
-                with st.expander("📊 すべての計算指標を確認 (密度・面積・カウント)"):
-                    st.dataframe(pd.DataFrame([extra_data]).T.rename(columns={0: "Value"}))
+                with st.expander("📊 すべての計算指標を確認"):
+                    st.json(extra_data)
 
                 c1, c2 = st.columns(2)
                 c1.image(img_rgb, caption="Raw Image")
                 c2.image(res_disp, caption="Analysis Result (Color Corrected)")
 
-                # データ格納
+                # データ格納 (UTCタイムスタンプ)
+                utc_timestamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
                 row_data = {
-                    "File": file.name, "Group": current_group_label, "Value": val, "Unit": unit, 
-                    "ID": st.session_state.current_analysis_id
+                    "File_Name": file.name, "Group": current_group_label, "Main_Value": val, "Unit": unit, 
+                    "Analysis_ID": st.session_state.current_analysis_id,
+                    "Timestamp_UTC": utc_timestamp
                 }
                 row_data.update(extra_data)
                 row_data.update(current_params_dict)
@@ -441,12 +476,17 @@ with tab_main:
             st.session_state.analysis_history.extend(batch_results)
             st.success("保存完了"); st.rerun()
 
-    # CSV出力
+    # CSV出力 (UTCファイル名)
     if st.session_state.analysis_history:
         st.divider()
         df_exp = pd.DataFrame(st.session_state.analysis_history)
         st.dataframe(df_exp)
-        st.download_button("📥 結果CSV", df_exp.to_csv(index=False).encode('utf-8-sig'), "results.csv")
+        
+        # UTCベースのファイル名生成
+        utc_filename = f"QuantData_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S_UTC')}.csv"
+        st.download_button("📥 結果CSV (UTC)", df_exp.to_csv(index=False).encode('utf-8-sig'), utc_filename)
+
+
 
 # ---------------------------------------------------------
 # 5. バリデーション (詳細版完全復元)
