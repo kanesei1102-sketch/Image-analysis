@@ -225,6 +225,58 @@ with st.sidebar:
         st.session_state.uploader_key = str(uuid.uuid4())
         st.rerun()
 
+    # -------------------------------------------------------------------------
+    # パラメータ保存ロジック 
+    # -------------------------------------------------------------------------
+    # 基本パラメータ
+    current_active_params = {
+        "解析モード": mode,
+        "空間スケール": scale_val,
+        "ROI正規化": use_roi_norm if 'use_roi_norm' in locals() else False
+    }
+
+    # モード別の詳細パラメータを追加
+    if mode.startswith("1.") or (mode.startswith("5.") and trend_metric.startswith("面積")):
+        current_active_params.update({
+            "解析対象色": target_a,
+            "感度": sens_a,
+            "輝度": bright_a
+        })
+        if 'use_roi_norm' in locals() and use_roi_norm:
+            current_active_params.update({
+                "ROI色": roi_color,
+                "ROI感度": sens_roi,
+                "ROI輝度": bright_roi
+            })
+
+    elif mode.startswith("2."):
+        current_active_params.update({
+            "核の色": target_a,
+            "核の感度": sens_a,
+            "核の輝度": bright_a,
+            "最小サイズ": min_size
+        })
+        if use_roi_norm:
+            current_active_params.update({
+                "ROI色": roi_color,
+                "ROI感度": sens_roi,
+                "ROI輝度": bright_roi
+            })
+
+    elif mode.startswith("3.") or (mode.startswith("5.") and trend_metric.startswith("共局在")):
+        current_active_params.update({
+            "CH-A": target_a, "感度A": sens_a, "輝度A": bright_a,
+            "CH-B": target_b, "感度B": sens_b, "輝度B": bright_b
+        })
+
+    elif mode.startswith("4."):
+        current_active_params.update({
+            "起点A": target_a,
+            "対象B": target_b,
+            "共通感度": sens_common,
+            "共通輝度": bright_common
+        })
+
     st.divider()
     st.markdown("### ⚙️ 監査証跡 (パラメータログ)")
     
