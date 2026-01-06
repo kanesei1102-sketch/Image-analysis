@@ -45,15 +45,32 @@ COLOR_MAP = {
     "エオジン (Cytoplasm)": {"lower": np.array([140, 20, 100]), "upper": np.array([180, 255, 255])}
 }
 
+# --- 修正後の get_mask 関数 ---
 def get_mask(hsv_img, color_name, sens, bright_min):
+    conf = COLOR_MAP[color_name]
+    
     if color_name == "赤色 (RFP)":
-        lower1 = np.array([0, 30, bright_min]); upper1 = np.array([10 + sens//2, 255, 255])
-        lower2 = np.array([170 - sens//2, 30, bright_min]); upper2 = np.array([180, 255, 255])
+        # 赤はHueの0付近と180付近の両方に存在するため特殊処理
+        lower1 = np.array([0, 30, bright_min])
+        upper1 = np.array([min(15, 10 + sens//2), 255, 255]) # 緑を侵食しない上限(15)
+        lower2 = np.array([max(165, 170 - sens//2), 30, bright_min]) # 青を侵食しない下限(165)
+        upper2 = np.array([180, 255, 255])
         return cv2.inRange(hsv_img, lower1, upper1) | cv2.inRange(hsv_img, lower2, upper2)
+    
     else:
-        conf = COLOR_MAP[color_name]
-        l = np.clip(conf["lower"] - sens, 0, 255); u = np.clip(conf["upper"] + sens, 0, 255)
-        l[2] = max(l[2], bright_min)
+        # 他の色（緑、青など）の処理
+        l = conf["lower"].copy()
+        u = conf["upper"].copy()
+        
+        # 感度を適用しつつ、色の境界をハードガード
+        if color_name == "緑色 (GFP)":
+            l[0] = max(35 - sens, 25) # 黄色(20-30)に寄りすぎない
+            u[0] = min(85 + sens, 95) # 青(100-)に寄りすぎない
+        elif color_name == "青色 (DAPI)":
+            l[0] = max(100 - sens, 95) # 緑(85)に寄りすぎない
+            u[0] = min(140 + sens, 155) # 紫(160-)に寄りすぎない
+            
+        l[2] = max(l[2], bright_min) # 輝度の最小値
         return cv2.inRange(hsv_img, l, u)
 
 def get_tissue_mask(hsv_img, color_name, sens, bright_min):
