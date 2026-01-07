@@ -12,7 +12,7 @@ import uuid
 # 0. ページ設定 & 定数
 # ---------------------------------------------------------
 st.set_page_config(page_title="Bio-Image Quantifier V2 (JP)", layout="wide")
-SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.09 (JP/Dual-Mode)"
+SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.10 (JP/Final-Integration)"
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = str(uuid.uuid4())
@@ -30,40 +30,29 @@ if "current_analysis_id" not in st.session_state:
 # 1. 画像処理エンジン
 # ---------------------------------------------------------
 COLOR_MAP = {
-    # 蛍光用（彩度条件を緩和）
-    "青色 (DAPI)": {"lower": np.array([90, 20, 50]), "upper": np.array([140, 255, 255])}, # Saturation min: 50 -> 20
+    # 蛍光用
+    "青色 (DAPI)": {"lower": np.array([90, 20, 50]), "upper": np.array([140, 255, 255])},
     "緑色 (GFP)": {"lower": np.array([35, 40, 40]), "upper": np.array([85, 255, 255])},
     "赤色 (RFP)": {"lower": np.array([0, 50, 50]), "upper": np.array([10, 255, 255])},
-    
-    # 明視野・染色用
+    # 明視野用
     "茶色 (DAB)": {"lower": np.array([10, 50, 20]), "upper": np.array([30, 255, 255])},
     "ヘマトキシリン (Nuclei)": {"lower": np.array([100, 50, 50]), "upper": np.array([170, 255, 200])},
     "エオジン (Cytoplasm)": {"lower": np.array([140, 20, 100]), "upper": np.array([180, 255, 255])}
 }
 
 CLEAN_NAMES = {
-    "茶色 (DAB)": "Brown_DAB",
-    "緑色 (GFP)": "Green_GFP",
-    "赤色 (RFP)": "Red_RFP",
-    "青色 (DAPI)": "Blue_DAPI",
-    "ヘマトキシリン (Nuclei)": "Blue_Nuclei",
-    "エオジン (Cytoplasm)": "Pink_Cyto"
+    "茶色 (DAB)": "Brown_DAB", "緑色 (GFP)": "Green_GFP", "赤色 (RFP)": "Red_RFP",
+    "青色 (DAPI)": "Blue_DAPI", "ヘマトキシリン (Nuclei)": "Blue_Nuclei", "エオジン (Cytoplasm)": "Pink_Cyto"
 }
 
 DISPLAY_COLORS = {
-    "茶色 (DAB)": (165, 42, 42),
-    "緑色 (GFP)": (0, 255, 0),
-    "赤色 (RFP)": (255, 0, 0),
-    "青色 (DAPI)": (0, 0, 255),
-    "ヘマトキシリン (Nuclei)": (0, 0, 255),
-    "エオジン (Cytoplasm)": (255, 105, 180)
+    "茶色 (DAB)": (165, 42, 42), "緑色 (GFP)": (0, 255, 0), "赤色 (RFP)": (255, 0, 0),
+    "青色 (DAPI)": (0, 0, 255), "ヘマトキシリン (Nuclei)": (0, 0, 255), "エオジン (Cytoplasm)": (255, 105, 180)
 }
 
 def get_mask(hsv_img, color_name, sens, bright_min):
     conf = COLOR_MAP[color_name]
     l = conf["lower"].copy(); u = conf["upper"].copy()
-    
-    # 赤系(Hue 0付近と180付近)のラップアラウンド
     if color_name == "赤色 (RFP)" or "エオジン" in color_name:
         lower1 = np.array([0, 30, bright_min]); upper1 = np.array([10 + sens, 255, 255])
         lower2 = np.array([170 - sens, 30, bright_min]); upper2 = np.array([180, 255, 255])
@@ -92,7 +81,6 @@ def get_centroids(mask):
 
 def calc_metrics(mask, scale_val, denominator_area_mm2, min_area_um2, max_area_um2, clean_name):
     total_px_count = cv2.countNonZero(mask) 
-    
     min_px = min_area_um2 / (scale_val**2) if scale_val > 0 else 0
     max_px = max_area_um2 / (scale_val**2) if scale_val > 0 else float('inf')
 
@@ -141,7 +129,7 @@ df_val = load_validation_data()
 # 3. UI & パラメータ
 # ---------------------------------------------------------
 st.title("🔬 Bio-Image Quantifier: Pro Edition (日本語版)")
-st.caption(f"{SOFTWARE_VERSION}: BBBC005対応 / HE断面対応")
+st.caption(f"{SOFTWARE_VERSION}: 蛍光/HE両対応・直径フィルタ搭載")
 st.sidebar.markdown(f"**Analysis ID (UTC):**\n`{st.session_state.current_analysis_id}`")
 
 tab_main, tab_val = st.tabs(["🚀 解析実行", "🏆 性能バリデーション"])
@@ -149,8 +137,8 @@ tab_main, tab_val = st.tabs(["🚀 解析実行", "🏆 性能バリデーショ
 with st.sidebar:
     st.header("解析レシピ")
     
-    # 画像タイプ選択 (これでデフォルト値を切り替える)
-    img_type = st.radio("画像タイプ:", ["蛍光 (Fluorescence)", "明視野 (Brightfield/HE)"], help="BBBC005は「蛍光」を選択してください")
+    # ★ ここでモードを切り替えることでBBBC005とHEを両立 ★
+    img_type = st.radio("画像タイプ:", ["蛍光 (Fluorescence)", "明視野 (Brightfield/HE)"], help="BBBC005などの黒背景画像は「蛍光」を選択")
     
     mode = st.selectbox("解析モード選択:", [
         "2. 細胞核カウント / 密度", 
@@ -186,10 +174,10 @@ with st.sidebar:
             def_color_idx = 3 # DAPI
             def_roi_norm = False # BBBC005はROI不要
             def_sens = 20
-            def_bright = 40 # 蛍光は少し低めでも拾う
-        else: # 明視野(HE)
+            def_bright = 40 
+        else: # 明視野
             def_color_idx = 4 # Hematoxylin
-            def_roi_norm = True # 組織切片はROI必須
+            def_roi_norm = True # 組織切片はROI推奨
             def_sens = 15
             def_bright = 50
 
@@ -198,7 +186,6 @@ with st.sidebar:
         bright_a = st.slider("核の輝度しきい値", 0, 255, def_bright)
         
         d_min, d_max, min_area, max_area = diameter_slider("核のサイズ範囲", default_range=(5.0, 20.0))
-        
         use_roi_norm = st.checkbox("ROI正規化 (組織領域のみ)", value=def_roi_norm)
         
         current_params_dict.update({
@@ -208,7 +195,7 @@ with st.sidebar:
         })
         
         if use_roi_norm:
-            roi_col_idx = 5 # Eosin default
+            roi_col_idx = 5 # Eosin
             roi_color = st.selectbox("ROI色 (組織全体):", list(COLOR_MAP.keys()), index=roi_col_idx)
             sens_roi = st.slider("ROI感度", 5, 50, 20); bright_roi = st.slider("ROI輝度", 0, 255, 40)
             current_params_dict.update({"Param_ROI_Name": CLEAN_NAMES[roi_color], "Param_ROI_Sens": sens_roi, "Param_ROI_Bright": bright_roi})
@@ -218,7 +205,6 @@ with st.sidebar:
         sens_a = st.slider("感度", 5, 50, 20); bright_a = st.slider("輝度", 0, 255, 60)
         d_min, d_max, min_area, max_area = diameter_slider("対象サイズ範囲")
         use_roi_norm = st.checkbox("ROI正規化", value=False)
-        
         current_params_dict.update({
             "Param_Target_Name": CLEAN_NAMES[target_a], "Param_Sensitivity": sens_a, "Param_Brightness": bright_a,
             "Param_ROI_Norm": use_roi_norm, "Param_MinDia_um": d_min, "Param_MaxDia_um": d_max,
@@ -229,7 +215,6 @@ with st.sidebar:
             sens_roi = st.slider("ROI感度", 5, 50, 20); bright_roi = st.slider("ROI輝度", 0, 255, 40)
             current_params_dict.update({"Param_ROI_Name": CLEAN_NAMES[roi_color], "Param_ROI_Sens": sens_roi, "Param_ROI_Bright": bright_roi})
 
-    # 他のモードは省略せず汎用実装
     elif mode.startswith("3."): # Coloc
         c1, c2 = st.columns(2)
         with c1:
@@ -459,10 +444,6 @@ with tab_main:
         st.dataframe(df_exp)
         utc_filename = f"QuantData_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S_UTC')}.csv"
         st.download_button("📥 結果CSV (UTC)", df_exp.to_csv(index=False).encode('utf-8-sig'), utc_filename)
-
-
-
-
 
 
 
