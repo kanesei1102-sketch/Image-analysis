@@ -7,12 +7,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import re
 import uuid
+from skimage.feature import peak_local_max
 
 # ---------------------------------------------------------
 # 0. ページ設定 & 定数
 # ---------------------------------------------------------
 st.set_page_config(page_title="Bio-Image Quantifier V2 (JP)", layout="wide")
-SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.11 (Fluo-ROI Supported)"
+SOFTWARE_VERSION = "Bio-Image Quantifier Pro v2026.11 (Adaptive-Watershed Edition)"
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = str(uuid.uuid4())
@@ -71,6 +72,26 @@ def get_tissue_mask(hsv_img, color_name, sens, bright_min):
     cv2.drawContours(mask_filled, valid_tissue, -1, 255, thickness=cv2.FILLED)
     return mask_filled
 
+def perform_adaptive_detection(gray_img, block_size=25, c_val=2, min_dist=3):
+    """適応的閾値 + 距離変換による検出 (BBBC対応)"""
+    if block_size % 2 == 0: block_size += 1
+    # 1. 適応的閾値処理
+    binary = cv2.adaptiveThreshold(
+        gray_img, 255, 
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY, 
+        block_size, c_val
+    )
+    # 2. ノイズ除去
+    kernel = np.ones((3,3), np.uint8)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+    
+    # 3. 距離変換 & ピーク検出
+    dist = cv2.distanceTransform(binary, cv2.DIST_L2, 3)
+    coords = peak_local_max(dist, min_distance=min_dist, labels=binary)
+    
+    return len(coords), coords, binary
+
 def calc_metrics_from_contours(cnts, scale_val, denominator_area_mm2, min_area_um2, max_area_um2, clean_name):
     # 閾値計算 (um2 -> px)
     min_px = min_area_um2 / (scale_val**2) if scale_val > 0 else 0
@@ -91,11 +112,45 @@ def calc_metrics_from_contours(cnts, scale_val, denominator_area_mm2, min_area_u
     }, valid_cnts
 
 # ---------------------------------------------------------
-# 2. バリデーションデータ
+# 2. バリデーションデータ (ユーザー実装復元)
 # ---------------------------------------------------------
 @st.cache_data
 def load_validation_data():
-    return pd.DataFrame() 
+    files = {
+        'C14': 'quantified_data_20260102_201522.csv',
+        'C40': 'quantified_data_20260102_194322.csv',
+        'C70': 'quantified_data_20260103_093427.csv',
+        'C100': 'quantified_data_20260102_202525.csv'
+    }
+    data_list = []
+    mapping = {'C14': 14, 'C40': 40, 'C70': 70, 'C100': 100}
+
+    for density, filename in files.items():
+        try:
+            df = pd.read_csv(filename)
+            col = 'Image_Name' if 'Image_Name' in df.columns else 'File Name'
+            for _, row in df.iterrows():
+                fname = str(row[col])
+                val = row['Value']
+                # チャネル判定
+                channel = 'W1' if 'w1' in fname.lower() else 'W2' if 'w2' in fname.lower() else None
+                if not channel: continue
+                # フォーカスレベル抽出
+                f_match = re.search(r'_F(\d+)_', fname)
+                if f_match:
+                    focus = int(f_match.group(1))
+                    accuracy = (val / mapping[density]) * 100
+                    data_list.append({
+                        'Density': density,
+                        'Ground Truth': mapping[density],
+                        'Focus': focus,
+                        'Channel': channel,
+                        'Value': val,
+                        'Accuracy': accuracy
+                    })
+        except FileNotFoundError:
+            pass 
+    return pd.DataFrame(data_list)
 
 df_val = load_validation_data()
 
@@ -103,7 +158,7 @@ df_val = load_validation_data()
 # 3. UI & パラメータ
 # ---------------------------------------------------------
 st.title("🔬 Bio-Image Quantifier: Pro Edition")
-st.caption(f"{SOFTWARE_VERSION}: 蛍光(ROI対応) / 明視野 完全両立版")
+st.caption(f"{SOFTWARE_VERSION}")
 st.sidebar.markdown(f"**Analysis ID (UTC):**\n`{st.session_state.current_analysis_id}`")
 
 tab_main, tab_val = st.tabs(["🚀 解析実行", "🏆 性能バリデーション"])
@@ -141,16 +196,21 @@ with st.sidebar:
     # --- モード別パラメータ ---
     if mode.startswith("2."): # カウント
         if img_type.startswith("蛍光"):
-            # === 蛍光モード設定 (Otsu + ROI) ===
-            st.markdown("##### 蛍光核検出 (Otsu)")
-            bright_a = st.slider("輝度しきい値 (Manual)", 0, 255, 40)
-            d_min, d_max, min_area, max_area = diameter_slider("核のサイズ範囲", default_range=(5.0, 20.0))
+            # === 蛍光モード設定 (Adaptive Threshold) ===
+            st.markdown("##### 蛍光核検出 (Adaptive)")
+            st.info("背景が暗い画像やBBBC005に最適化されています。")
             
-            # ★ 蛍光でもROIを有効化 ★
-            use_roi_norm = st.checkbox("ROI正規化 (組織領域のみ)", value=False, help="組織領域以外を除外して密度を計算します")
+            # Adaptive Threshold Parameters
+            block_size = st.slider("検出ブロックサイズ", 3, 51, 25, step=2, help="この範囲内で明るさを比較します。細胞サイズより少し大きく。")
+            c_val = st.slider("感度 (C値)", -10, 20, 2, help="小さいほど感度UP。")
+            min_dist_px = st.slider("最小細胞間距離 (px)", 1, 20, 3, help="近すぎるピークを除外します。")
+            
+            d_min, d_max, min_area, max_area = diameter_slider("サイズ確認用 (円)", default_range=(2.0, 20.0))
+            
+            use_roi_norm = st.checkbox("ROI正規化 (組織領域のみ)", value=False)
             
             target_a = "青色 (DAPI)" # デフォルト
-            sens_a = 0
+            sens_a = 0; bright_a = 0 # Adaptiveでは不使用
             
         else: # 明視野モード
             # === 明視野モード設定 (HSV) ===
@@ -160,6 +220,8 @@ with st.sidebar:
             
             d_min, d_max, min_area, max_area = diameter_slider("核のサイズ範囲", default_range=(5.0, 20.0))
             use_roi_norm = st.checkbox("ROI正規化 (組織領域のみ)", value=True)
+            # ダミー変数（蛍光用）
+            block_size = 25; c_val = 2; min_dist_px = 3
         
         # 共通パラメータ保存
         current_params_dict.update({
@@ -169,10 +231,10 @@ with st.sidebar:
             "Param_MinArea_um2": min_area, "Param_MaxArea_um2": max_area
         })
         
-        # ROI設定（蛍光・明視野共通）
+        # ROI設定
         if use_roi_norm:
             st.markdown("##### ROI設定")
-            roi_color = st.selectbox("ROI領域の色:", list(COLOR_MAP.keys()), index=5, help="蛍光の場合は、組織の自家蛍光やカウンターステインの色を選択してください")
+            roi_color = st.selectbox("ROI領域の色:", list(COLOR_MAP.keys()), index=5)
             sens_roi = st.slider("ROI感度", 5, 50, 20)
             bright_roi = st.slider("ROI輝度", 0, 255, 30)
             current_params_dict.update({"Param_ROI_Name": CLEAN_NAMES[roi_color], "Param_ROI_Sens": sens_roi, "Param_ROI_Bright": bright_roi})
@@ -232,8 +294,6 @@ with tab_main:
             
             img_bgr = None
             if img_raw is not None:
-                # 画像が「16-bit」または「8-bitだけど非常に暗い(最大値が小さい)」場合に補正
-                # BBBC005などは8-bitでも値が0-30程度しか使われていないことがある
                 is_low_contrast = (img_raw.max() < 150) 
                 is_16bit = (img_raw.dtype == np.uint16) or (img_raw.max() > 255)
                 
@@ -250,7 +310,6 @@ with tab_main:
                     else:
                         img_bgr = img_8bit
                 else:
-                    # 普通の明るい画像のときはそのまま
                     img_bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
                 if group_strategy == "ファイル名から自動抽出":
@@ -279,42 +338,49 @@ with tab_main:
                 # --- Mode 2: 細胞核カウント ---
                 if mode.startswith("2."):
                     # --------------------------------------
-                    # ★ 蛍光 (BBBC005) モード
+                    # ★ 蛍光 (BBBC005対応 / Adaptive) モード
                     # --------------------------------------
                     if img_type.startswith("蛍光"):
                         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-                        # Manual + Otsu
-                        _, th_manual = cv2.threshold(gray, bright_a, 255, cv2.THRESH_BINARY)
-                        blur = cv2.medianBlur(gray, 3) 
-                        _, th_otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-                        mask_nuclei = cv2.bitwise_and(th_manual, th_otsu)
                         
-                        # === 蛍光でのROI適用 ===
+                        # 1. 適応的閾値 + Watershed
+                        final_count, coords, binary_mask = perform_adaptive_detection(gray, block_size, c_val, min_dist_px)
+                        
+                        # ROI処理
                         if use_roi_norm:
                             mask_roi = get_tissue_mask(img_hsv, roi_color, sens_roi, bright_roi)
                             roi_px = cv2.countNonZero(mask_roi)
                             denominator_area_mm2 = roi_px * ((scale_val/1000)**2)
                             roi_status = "ROI"
                             
-                            # ROI外の核をマスク
-                            mask_nuclei = cv2.bitwise_and(mask_nuclei, mask_roi)
-                            
-                            # ROI描画(赤枠)
+                            # ROIマスク内の座標のみ残す
+                            valid_coords = []
+                            for p in coords:
+                                # p is [y, x]
+                                if mask_roi[p[0], p[1]] > 0:
+                                    valid_coords.append(p)
+                            coords = np.array(valid_coords)
+                            final_count = len(coords)
+
+                            # ROI描画
                             cnts_roi, _ = cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                             cv2.drawContours(res_disp, cnts_roi, -1, (255,0,0), 3) 
                             extra_data["ROI_Area_mm2"] = round(denominator_area_mm2, 4)
 
-                        kernel = np.ones((3,3), np.uint8)
-                        mask_nuclei = cv2.morphologyEx(mask_nuclei, cv2.MORPH_OPEN, kernel)
+                        val = final_count
+                        unit = "cells"
                         
-                        cnts, _ = cv2.findContours(mask_nuclei, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                        m_nuc, valid_cnts = calc_metrics_from_contours(cnts, scale_val, denominator_area_mm2, min_area, max_area, "Fluo_Nuclei")
-                        extra_data.update(m_nuc)
-                        
-                        val = m_nuc["Fluo_Nuclei_Count"]; unit = "cells"
-                        
-                        draw_col = (0, 255, 0) if high_contrast else (0, 0, 255)
-                        cv2.drawContours(res_disp, valid_cnts, -1, draw_col, 2)
+                        # 密度計算
+                        density = val / denominator_area_mm2 if denominator_area_mm2 > 0 else 0
+                        extra_data.update({
+                            "Fluo_Nuclei_Count": val,
+                            "Fluo_Nuclei_Density_per_mm2": round(density, 2)
+                        })
+
+                        # 描画 (点)
+                        if len(coords) > 0:
+                            for p in coords:
+                                cv2.circle(res_disp, (p[1], p[0]), 3, (0, 255, 0), -1)
 
                     # --------------------------------------
                     # ★ 明視野 (HE) モード
